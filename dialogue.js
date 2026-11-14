@@ -48,3 +48,37 @@ export const LINES = [
     note: 'In Québec, “bienvenue” also means “you’re welcome.”',
   },
 ];
+
+// Keep a copy of the café script, then define the speaking assessment given at the info desk.
+export const CAFE = LINES.slice();
+
+// Assessment audio files use the prefix "a" (audio/a1_barista.mp3, audio/a1_opt1.mp3, ...).
+export const ASSESS = [
+  {
+    fr: 'Bonjour! Bienvenue à Montréal! Comment ça va?',
+    en: 'Hello! Welcome to Montréal! How are you?',
+    options: [
+      { fr: 'Ça va bien, et vous?', en: 'I’m doing well, and you?', ok: true },
+      { fr: 'Je veux apprendre le français.', en: 'I want to learn French.' },
+      { fr: 'Bon.', en: 'Good.' },
+    ],
+  },
+  {
+    fr: 'Comment vous appelez-vous?',
+    en: 'What is your name?',
+    options: [
+      { fr: 'Je m’appelle Alex.', en: 'My name is Alex.', ok: true },
+      { fr: 'J’ai vingt ans.', en: 'I am twenty years old.' },
+      { fr: 'Oui, merci.', en: 'Yes, thank you.' },
+    ],
+  },
+  {
+    fr: 'Qu’est-ce qui vous amène à Montréal?',
+    en: 'What brings you to Montréal?',
+    options: [
+      { fr: 'Je suis ici pour pratiquer mon français.', en: 'I am here to practice my French.', ok: true },
+      { fr: 'Il fait froid.', en: 'It is cold.' },
+      { fr: 'Je ne sais pas.', en: 'I don’t know.' },
+    ],
+  },
+];

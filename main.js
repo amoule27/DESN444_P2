@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { VRButton } from 'three/addons/webxr/VRButton.js';
-import { LINES } from './dialogue.js';
+import { LINES, CAFE, ASSESS } from './dialogue.js';
 
 /* ---------- design tokens (from the Figma mid-fidelity file) ---------- */
 const COL = { teal: '#1F9AA0', ink: '#2C4A52', mint: '#EAFBFC', line: '#BFEDEF', grey: '#6B7C82', ok: '#0B9A6D', bad: '#C0483B' };
@@ -124,8 +124,8 @@ let bubbleFr = '', bubbleEn = '', msg = { t: '', c: COL.grey };
 const streetCard = new Panel(1.25, 0.62, (p) => {
   const W = p.cv.width, H = p.cv.height;
   p.rr(4, 4, W - 8, H - 8, 36, 'rgba(244,251,252,.94)', COL.line);
-  p.text('You are located in the Rosemont neighbourhood. Enter the café to your left.', 50, 44, 46, COL.teal, 700, W - 100);
-  p.btn(50, H - 150, 380, 100, 'Enter the café', 'enter', goCafe);
+  p.text(card.t, 50, 44, 42, COL.teal, 700, W - 100);
+  p.btn(50, H - 150, 480, 100, card.b, 'enter', card.fn);
 }).place(-0.55, 1.25, -1.5);
 
 /* barista speech bubble */
@@ -170,10 +170,9 @@ const result = new Panel(1.1, 1.1, (p) => {
   c.strokeStyle = '#DDF2F3'; c.beginPath(); c.arc(cx, cy, 200, Math.PI, 2 * Math.PI); c.stroke();
   c.strokeStyle = COL.teal; c.beginPath(); c.arc(cx, cy, 200, Math.PI, Math.PI + Math.PI * score / 10); c.stroke();
   p.text(score.toFixed(1), cx, cy - 70, 90, COL.grey, 600, 400, 'center');
-  const head = score >= 8 ? 'Excellent job!' : score >= 5 ? 'Bon travail!' : 'Keep practicing!';
-  p.text(head, cx, 430, 70, COL.teal, 700, W - 100, 'center');
-  p.text(`You answered ${first} of ${LINES.length} replies correctly on the first try.`, cx, 530, 40, COL.ink, 400, W - 140, 'center');
-  p.btn(cx - 200, H - 190, 400, 100, 'Play again', 'again', playAgain);
+  p.text(res.head, cx, 430, 70, COL.teal, 700, W - 100, 'center');
+  p.text(res.body, cx, 530, 36, COL.ink, 400, W - 140, 'center');
+  p.btn(cx - 200, H - 190, 400, 100, res.btn, 'again', res.fn);
 }).place(0, 1.5, -1.4);
 
 /* ---------- speech: recorded audio first, browser voice as placeholder ---------- */
@@ -209,10 +208,10 @@ const renderAll = () => { bubble.render(); choices.render(); };
 function startTurn() {
   const t = LINES[turn];
   tries = 0; reveal = false; showEn = false; busy = false; msg = { t: '', c: COL.grey };
-  order = shuffle(t.options.map((o, i) => ({ ...o, audio: `audio/t${turn + 1}_opt${i + 1}.mp3` })));
+  order = shuffle(t.options.map((o, i) => ({ ...o, audio: `audio/${ap()}_opt${i + 1}.mp3` })));
   bubbleFr = t.fr; bubbleEn = t.en; talking = true;
   renderAll();
-  speak(t.fr, `audio/t${turn + 1}_barista.mp3`, () => { talking = false; });
+  speak(t.fr, `audio/${ap()}_barista.mp3`, () => { talking = false; });
 }
 function pick(o) {
   if (busy) return;
@@ -237,26 +236,39 @@ function skip() {
   const ok = LINES[turn].options.find((o) => o.ok);
   msg = { t: `A good reply: “${ok.fr}” (${ok.en})`, c: COL.teal };
   renderAll();
-  speak(ok.fr, `audio/t${turn + 1}_opt${LINES[turn].options.indexOf(ok) + 1}.mp3`, () => setTimeout(next, 1200));
+  speak(ok.fr, `audio/${ap()}_opt${LINES[turn].options.indexOf(ok) + 1}.mp3`, () => setTimeout(next, 1200));
 }
 function next() {
   turn++;
-  if (turn >= LINES.length) { score = +(first / LINES.length * 10).toFixed(1); setScene('result'); result.render(); } else startTurn();
+  if (turn < LINES.length) return startTurn();
+  if (mode === 'assess') return finishAssess();
+  score = +(first / LINES.length * 10).toFixed(1);
+  res = { head: score >= 8 ? 'Excellent job!' : score >= 5 ? 'Bon travail!' : 'Keep practicing!', body: `You answered ${first} of ${LINES.length} replies correctly on the first try.`, btn: 'Play again', fn: playAgain };
+  setScene('result'); result.render();
 }
-function goCafe() { transition(() => { setScene('cafe'); turn = 0; first = 0; startTurn(); }); }
+function goCafe() { transition(() => { loadScript(CAFE); mode = 'cafe'; setScene('cafe'); turn = 0; first = 0; startTurn(); }); }
 function playAgain() { goCafe(); }
 
 /* ---------- scenes ---------- */
 const street = new THREE.Group(), cafe = new THREE.Group();
 scene.add(street, cafe);
 function setScene(name) {
-  street.visible = name === 'street';
-  cafe.visible = name !== 'street';
-  streetCard.mesh.visible = name === 'street';
-  bubble.mesh.visible = choices.mesh.visible = name === 'cafe';
-  result.mesh.visible = name === 'result';
-  scene.background = new THREE.Color(name === 'street' ? '#a9d6f5' : '#1b1512');
-  scene.fog = name === 'street' ? new THREE.Fog('#a9d6f5', 18, 50) : null;
+  cur = name;
+  const on = (...n) => n.includes(name);
+  street.visible = on('street', 'tip');
+  cafe.visible = on('cafe', 'result');
+  desk.visible = on('deskintro', 'desk', 'level');
+  globe.visible = on('load', 'signin', 'welcome', 'dash');
+  grid.visible = dash.mesh.visible = on('dash');
+  streetCard.mesh.visible = on('street', 'deskintro');
+  bubble.mesh.visible = choices.mesh.visible = on('cafe', 'desk');
+  result.mesh.visible = on('result', 'level');
+  loading.mesh.visible = on('load', 'tip');
+  sign.mesh.visible = on('signin', 'welcome');
+  scene.background = new THREE.Color(on('street', 'tip') ? '#a9d6f5' : on('dash') ? '#dfe5e9' : on('desk', 'deskintro', 'level') ? '#2a2f36' : on('cafe', 'result') ? '#1b1512' : '#271f33');
+  scene.fog = on('street', 'tip') ? new THREE.Fog('#a9d6f5', 18, 50) : null;
+  if (on('dash')) { globe.position.set(.95, 1.45, -2.1); globe.scale.setScalar(.6); } else { globe.position.set(0, .2, -7); globe.scale.setScalar(3.5); }
+  [loading, sign, dash, streetCard].forEach((p) => p.mesh.visible && p.render());
 }
 
 /* Rosemont street (stylized stand-in; drop a 360 photo in assets/rosemont-360.jpg to replace it) */
@@ -334,6 +346,165 @@ const hair = new THREE.Mesh(new THREE.SphereGeometry(.15, 20, 16, 0, Math.PI * 2
 const mouth = new THREE.Mesh(new THREE.BoxGeometry(.06, .012, .01), M('#7a2f2f')); mouth.position.set(0, -.05, .135); head.add(mouth);
 [-1, 1].forEach((s) => { const a = new THREE.Mesh(new THREE.CylinderGeometry(.045, .045, .55, 10), M(COL.teal)); a.position.set(s * .27, 1.1, .05); a.rotation.z = s * .12; barista.add(a); });
 
+/* ---------- app flow: loading → sign-in → dashboard → info desk → module ---------- */
+const loadScript = (a) => LINES.splice(0, LINES.length, ...a);
+let cur = 'load', dState = 'lang', pLearn = -1, pMod = -1, mode = 'cafe', dMsg = '', gT = null;
+let card = { t: 'You are located in the Rosemont neighbourhood. Enter the café to your left.', b: 'Enter the café', fn: goCafe };
+let res = { head: '', body: '', btn: 'Play again', fn: playAgain };
+const ap = () => (mode === 'assess' ? 'a' : 't') + (turn + 1);
+const code = Array.from({ length: 9 }, () => 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'[Math.random() * 32 | 0]).join(' ');
+const later = (ms, fn) => setTimeout(fn, ms);
+
+function logo(c, x, y, s, hole) {
+  c.fillStyle = COL.ok; c.beginPath(); c.arc(x, y, s, 0, 7); c.fill();
+  c.beginPath(); c.moveTo(x - s, y); c.lineTo(x - s, y + s * 1.25); c.lineTo(x - s * .3, y + s * .85); c.fill();
+  if (!hole) c.globalCompositeOperation = 'destination-out';
+  c.fillStyle = hole || '#000'; c.beginPath(); c.arc(x + s * .05, y - s * .05, s * .32, 0, 7); c.fill();
+  c.globalCompositeOperation = 'source-over';
+}
+const loading = new Panel(1.2, .8, (p) => {
+  const c = p.ctx, W = p.cv.width, H = p.cv.height;
+  if (cur === 'tip') {
+    p.rr(4, 4, W - 8, H - 8, 40, '#fff', COL.line);
+    p.text('Use your map to navigate the neighbourhood.', W / 2, 90, 52, COL.ink, 600, W - 140, 'center');
+    p.text('Look for the café on your route, then walk in.', W / 2, 300, 36, COL.grey, 400, W - 160, 'center');
+    logo(c, 140, H - 110, 40, '#fff'); p.text('Connecting you…', 210, H - 135, 40, COL.ink, 500);
+  } else { logo(c, W / 2, 230, 110); p.text('Connecting you…', W / 2, 400, 48, '#fff', 500, W, 'center'); }
+}).place(0, 1.5, -1.6);
+
+const sign = new Panel(1.1, .85, (p) => {
+  const c = p.ctx, W = p.cv.width;
+  p.rr(4, 4, W - 8, p.cv.height - 8, 44, '#fff', COL.line);
+  p.text('Sign in', W / 2, 40, 64, '#111', 700, W, 'center');
+  if (cur === 'signin') {
+    [['Take off your headset and go to worldspeak.auth0.com/authenticate', 150], ['Enter this one-time login code on your external device.', 340]].forEach(([t, y], i) => {
+      c.beginPath(); c.arc(80, y + 24, 30, 0, 7); c.fillStyle = COL.ok; c.fill();
+      p.text(String(i + 1), 80, y + 4, 36, '#fff', 700, 60, 'center');
+      p.text(t, 140, y, 34, COL.grey, 400, W - 190);
+    });
+    p.rr(60, 500, W - 120, 110, 16, '#fff', '#c9d2d6'); p.text(code, W / 2, 530, 48, COL.ink, 700, W, 'center');
+  } else {
+    c.beginPath(); c.arc(W / 2, 250, 56, 0, 7); c.fillStyle = COL.ok; c.fill();
+    p.text('✓', W / 2, 205, 80, '#fff', 700, 100, 'center');
+    p.text('Hello, Alex!', W / 2, 350, 64, COL.grey, 700, W, 'center');
+    p.text('You’re all set. You will be connected in a moment.', W / 2, 450, 36, COL.grey, 400, W - 160, 'center');
+  }
+}).place(0, 1.5, -1.5);
+
+/* globe + dashboard */
+const globe = new THREE.Mesh(new THREE.SphereGeometry(1, 64, 48), new THREE.MeshLambertMaterial({ color: '#3a6ea5' }));
+globe.rotation.x = .3; scene.add(globe);
+new THREE.TextureLoader().load('https://cdn.jsdelivr.net/gh/mrdoob/three.js@r160/examples/textures/planets/earth_atmos_2048.jpg', (t) => {
+  t.colorSpace = THREE.SRGBColorSpace; globe.material.map = t; globe.material.color.set('#ffffff'); globe.material.needsUpdate = true;
+}, undefined, () => {});
+const LA = 45.5 * Math.PI / 180, LO = -73.6 * Math.PI / 180;
+const pin = new THREE.Mesh(new THREE.SphereGeometry(.035, 12, 8), new THREE.MeshBasicMaterial({ color: '#ff4b3e' }));
+pin.position.set(Math.cos(LA) * Math.cos(LO), Math.sin(LA), -Math.cos(LA) * Math.sin(LO)).multiplyScalar(1.01);
+pin.visible = false; globe.add(pin);
+const grid = new THREE.GridHelper(40, 40, '#b8c2c9', '#cdd5da'); grid.visible = false; scene.add(grid);
+
+const FLAGS = [['German', ['#000', '#d00', '#fc0'], 1], ['French', ['#0055a4', '#fff', '#ef4135'], 0], ['Spanish', ['#c60b1e', '#ffc400', '#c60b1e'], 1], ['Italian', ['#009246', '#fff', '#ce2b37'], 0]];
+const LEARN = ['How to address people', 'How to order with confidence', 'How to ask for directions'];
+const LEARN_SUB = ['Pronouns, adjectives, greetings.', 'Quantities, etiquette, modifiers.', 'Streets, landmarks, transit.'];
+const MODS = ['Explore a quiet neighbourhood in Montréal and practice ordering at a café.', 'Walk through old town Montréal and practice your skills at a sit-down diner.', 'Explore a local Montréal gift shop and practice asking for specific items.'];
+const gs = (s) => { dState = s; dMsg = ''; dash.render(); };
+function list(p, items, subs, sel, y0, h, pickFn, enabled = () => true) {
+  const c = p.ctx, W = p.cv.width;
+  items.forEach((t, i) => {
+    const y = y0 + i * (h + 16), hv = p.hover === 'r' + i, ok = enabled(i);
+    p.rr(44, y, W - 88, h, 20, hv && ok ? COL.mint : '#fff', sel === i ? COL.teal : COL.line, sel === i ? 6 : 3);
+    p.text(t, 76, y + (subs ? 16 : 22), 36, ok ? COL.ink : '#9aa8ad', 500, W - 220);
+    if (subs) p.text(subs[i], 76, y + 66, 30, COL.grey);
+    c.beginPath(); c.arc(W - 100, y + h / 2, 22, 0, 7); c.strokeStyle = COL.line; c.lineWidth = 4; c.stroke();
+    if (sel === i) { c.beginPath(); c.arc(W - 100, y + h / 2, 12, 0, 7); c.fillStyle = COL.teal; c.fill(); }
+    p.hits.push({ x: 44, y, w: W - 88, h, id: 'r' + i, fn: () => pickFn(i) });
+  });
+}
+const dash = new Panel(1.6, 1.45, (p) => {
+  const c = p.ctx, W = p.cv.width, H = p.cv.height;
+  p.rr(4, 4, W - 8, H - 8, 40, 'rgba(240,245,247,.96)', COL.line);
+  p.text('Welcome, Alex', 44, 34, 58, COL.ink, 700);
+  p.rr(560, 40, 420, 70, 35, '#fff', COL.line); p.text('Find a destination.', 600, 58, 32, '#9aa8ad');
+  const back = (t) => {
+    p.text('←', 44, 150, 44, COL.ink, 600); p.text(t, 110, 156, 34, COL.grey, 500, W - 160);
+    p.hits.push({ x: 30, y: 140, w: 80, h: 70, id: 'back', fn: () => gs(dState === 'mods' ? 'learn' : 'lang') });
+  };
+  if (dState === 'lang') {
+    p.text('Discover locations by language', 44, 160, 36, COL.ink, 700);
+    p.text('Select a language to view destinations on the globe.', 44, 210, 30, COL.grey);
+    FLAGS.forEach(([n, cs, hz], i) => {
+      const x = 44 + i * 240, y = 290, hv = p.hover === 'f' + i;
+      p.rr(x, y, 220, 230, 20, hv ? COL.mint : '#fff', hv ? COL.teal : COL.line);
+      cs.forEach((col, k) => { c.fillStyle = col; if (hz) c.fillRect(x + 20, y + 24 + k * 40, 180, 40); else c.fillRect(x + 20 + k * 60, y + 24, 60, 120); });
+      c.strokeStyle = '#d5dcdf'; c.lineWidth = 2; c.strokeRect(x + 20, y + 24, 180, 120);
+      p.text(n, x + 110, y + 168, 34, COL.ink, 500, 200, 'center');
+      p.hits.push({ x, y, w: 220, h: 230, id: 'f' + i, fn: () => {
+        if (i !== 1) { dMsg = 'Only French is available in this prototype.'; return dash.render(); }
+        const ty = -Math.PI / 2 - LO;
+        globe.rotation.y = ty + ((globe.rotation.y - ty + Math.PI) % (2 * Math.PI) + 2 * Math.PI) % (2 * Math.PI) - Math.PI;
+        gT = { x: LA, y: ty }; pin.visible = true; gs('learn');
+      } });
+    });
+  } else if (dState === 'learn') {
+    back('What do you want to learn?');
+    list(p, LEARN, LEARN_SUB, pLearn, 230, 120, (i) => { pLearn = i; dMsg = ''; dash.render(); });
+    p.btn(44, H - 150, 300, 90, 'Continue', 'go', () => { if (pLearn < 0) { dMsg = 'Choose a topic to continue.'; dash.render(); } else gs('mods'); });
+  } else {
+    back('Suggested modules according to your learning goals.');
+    list(p, MODS, null, pMod, 230, 160, (i) => { if (i === 0) { pMod = 0; dMsg = ''; } else dMsg = 'Coming soon. This prototype has the café module only.'; dash.render(); }, (i) => i === 0);
+    p.btn(44, H - 150, 300, 90, 'Continue', 'go', () => { if (pMod === 0) toDesk(); else { dMsg = 'Choose a module to continue.'; dash.render(); } });
+  }
+  p.text(dMsg, dState === 'lang' ? 44 : 380, dState === 'lang' ? 560 : H - 130, 30, COL.bad, 600, W - 440);
+}).place(-0.65, 1.35, -1.75);
+
+/* info desk (stylized stand-in for your lobby photo) */
+const desk = new THREE.Group(); scene.add(desk);
+box(desk, 10, .1, 10, '#c9ced2', 0, -.05, -3);
+box(desk, 10, 4, .1, '#20242a', 0, 2, -5.5);
+box(desk, .1, 4, 10, '#2c3138', -5, 2, -3);
+box(desk, 4.6, 1.05, .8, '#f4f5f6', 0, .52, -2.4);
+box(desk, 4.8, .06, .95, '#e1e4e7', 0, 1.06, -2.4);
+canvasPlane(1.8, .7, 512, (c, w, h) => {
+  c.fillStyle = '#1b2430'; c.fillRect(0, 0, w, h); c.fillStyle = '#fff'; c.font = `600 ${h * .2}px ${FONT}`;
+  c.textAlign = 'center'; c.textBaseline = 'middle'; c.fillText('Information', w / 2, h / 2);
+}, desk, .9, 2.3, -5.4);
+function makePerson(parent, x, z, shirt, hairCol) {
+  const g = new THREE.Group(); g.position.set(x, 0, z); parent.add(g);
+  const torso = new THREE.Mesh(new THREE.CylinderGeometry(.2, .25, .7, 16), M(shirt)); torso.position.y = 1.05; g.add(torso);
+  const head = new THREE.Group(); head.position.y = 1.54; g.add(head);
+  head.add(new THREE.Mesh(new THREE.SphereGeometry(.14, 20, 16), M('#e2b48f')));
+  const hair = new THREE.Mesh(new THREE.SphereGeometry(.15, 20, 16, 0, Math.PI * 2, 0, Math.PI * .55), M(hairCol)); hair.position.y = .02; head.add(hair);
+  const mouth = new THREE.Mesh(new THREE.BoxGeometry(.06, .012, .01), M('#7a2f2f')); mouth.position.set(0, -.05, .135); head.add(mouth);
+  [-1, 1].forEach((s) => { const a = new THREE.Mesh(new THREE.CylinderGeometry(.045, .045, .55, 10), M(shirt)); a.position.set(s * .27, 1.1, .05); a.rotation.z = s * .12; g.add(a); });
+  return { g, head, mouth };
+}
+const rec = makePerson(desk, -.5, -3.1, '#1d1d22', '#b8531f');
+
+/* flow */
+function boot() {
+  setScene('load');
+  later(2600, () => { setScene('signin'); later(3500, () => { setScene('welcome'); later(2200, () => transition(() => { dState = 'lang'; setScene('dash'); })); }); });
+}
+function toDesk() {
+  transition(() => {
+    card = { t: 'Welcome to Montréal! Before you begin, we need a bit of information about your speaking skills. This short assessment sets the difficulty of your module.', b: 'Begin speaking assessment', fn: beginAssess };
+    setScene('deskintro');
+  });
+}
+function beginAssess() { mode = 'assess'; loadScript(ASSESS); turn = 0; first = 0; setScene('desk'); startTurn(); }
+function finishAssess() {
+  score = +(4 + 6 * first / LINES.length).toFixed(1);
+  res = { head: score >= 8 ? 'Excellent job!' : score >= 6 ? 'Bon travail!' : 'Good start!', body: `You have ${score >= 8 ? 'strong' : 'developing'} speaking skills. Based on your replies you will practice at a ${score} difficulty level. You can change this anytime in settings.`, btn: 'Begin module', fn: beginModule };
+  setScene('level'); result.render();
+}
+function beginModule() {
+  transition(() => {
+    card = { t: 'You are located in the Rosemont neighbourhood. Enter the café to your left.', b: 'Enter the café', fn: goCafe };
+    setScene('tip');
+    later(3200, () => transition(() => setScene('street')));
+  });
+}
+
 /* ---------- scene fade ---------- */
 const fade = new THREE.Mesh(new THREE.PlaneGeometry(4, 4), new THREE.MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: 0, depthTest: false }));
 fade.position.z = -.3; fade.renderOrder = 999; camera.add(fade);
@@ -370,9 +541,8 @@ addEventListener('pointerup', () => { if (drag && drag.moved < 6 && mouseHit && 
 
 /* ---------- main loop ---------- */
 const clock = new THREE.Clock();
-setScene('street');
-streetCard.render();
-document.fonts && document.fonts.ready.then(() => { streetCard.render(); });
+document.fonts && document.fonts.ready.then(() => panels.forEach((p) => p.mesh.visible && p.render()));
+boot();
 
 renderer.setAnimationLoop(() => {
   const dt = Math.min(clock.getDelta(), .1), t = clock.elapsedTime;
@@ -398,6 +568,11 @@ renderer.setAnimationLoop(() => {
   head.rotation.z = talking ? Math.sin(t * 7) * .05 : Math.sin(t * .8) * .02;
   mouth.scale.y = talking ? 1 + Math.abs(Math.sin(t * 14)) * 5 : 1;
 
+  rec.head.rotation.z = talking ? Math.sin(t * 7) * .05 : 0;
+  rec.mouth.scale.y = talking ? 1 + Math.abs(Math.sin(t * 14)) * 5 : 1;
+  if (globe.visible) {
+    if (gT) { const k = Math.min(1, dt * 2.5); globe.rotation.y += (gT.y - globe.rotation.y) * k; globe.rotation.x += (gT.x - globe.rotation.x) * k; } else globe.rotation.y += dt * .08;
+  }
   if (fadeT) {
     fadeT.t += dt;
     const a = fadeT.t < .4 ? fadeT.t / .4 : 1 - (fadeT.t - .4) / .4;
