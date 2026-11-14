@@ -285,7 +285,7 @@ for (const z of [-2, -9, -16]) {
 }
 new THREE.TextureLoader().load('assets/rosemont-360.jpg', (t) => {
   t.colorSpace = THREE.SRGBColorSpace;
-  const s = new THREE.Mesh(new THREE.SphereGeometry(50, 48, 32).scale(-1, 1, 1), new THREE.MeshBasicMaterial({ map: t }));
+  const s = new THREE.Mesh(new THREE.SphereGeometry(50, 48, 32).scale(-1, 1, 1), new THREE.MeshBasicMaterial({ map: t, fog: false }));
   s.position.y = 1.6; street.add(s); sty.visible = false;
 }, undefined, () => {});
 
