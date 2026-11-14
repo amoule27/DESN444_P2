@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Un cortado à Rosemont — French VR</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Source+Sans+3:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  html, body { margin: 0; height: 100%; background: #1b1512; overflow: hidden; font-family: 'Source Sans 3', 'Segoe UI', Arial, sans-serif; }
+  canvas { display: block; }
+  #hint {
+    position: fixed; left: 16px; top: 16px; max-width: 320px; padding: 10px 14px;
+    background: rgba(244, 251, 252, .92); color: #2C4A52; border: 1px solid #BFEDEF; border-radius: 12px;
+    font-size: 15px; line-height: 1.35;
+  }
+  #hint b { color: #1F9AA0; }
+</style>
+<script type="importmap">
+{ "imports": {
+  "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+} }
+</script>
+</head>
+<body>
+<div id="hint"><b>Un cortado à Rosemont.</b> On a Quest 3, tap <b>Enter VR</b> (bottom of the page). On a computer, drag to look around and click the panels.</div>
+<script type="module" src="./main.js"></script>
+</body>
+</html>
