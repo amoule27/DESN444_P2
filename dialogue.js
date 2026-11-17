@@ -36,6 +36,12 @@ export const LINES = [
       { fr: 'Je suis étudiant.', en: 'I am a student.' },
     ],
     note: '“Débit ou crédit?” is the usual question at the payment terminal.',
+    // After this turn the barista asks the student to tap their card on the terminal (Phase 2).
+    // Optional audio: audio/pay.mp3 (this line) and audio/pay_ok.mp3 ("Parfait, c’est approuvé. Merci!").
+    pay: {
+      fr: 'Parfait! Vous pouvez taper votre carte ici, s’il vous plaît.',
+      en: 'Perfect! You can tap your card here, please.',
+    },
   },
   {
     fr: 'Voilà votre cortado! Bonne journée!',
