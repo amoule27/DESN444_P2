@@ -149,6 +149,7 @@ const bubble = new Panel(1.3, 0.62, (p) => {
 
 /* reply choices (Figma: "Use the microphone to reply…", speaker icons, mic, "Skip. Not sure.") */
 let order_ = [];
+let listening = false;
 const choices = new Panel(1.5, 1.3, (p) => {
   const c = p.ctx, W = p.cv.width, H = p.cv.height;
   p.rr(4, 4, W - 8, H - 8, 40, 'rgba(244,251,252,.95)', COL.line);
@@ -164,11 +165,13 @@ const choices = new Panel(1.5, 1.3, (p) => {
     p.hits.push({ x: 40, y, w: W - 80, h: 130, id: 'o' + i, fn: () => pick(o) });
   });
   p.text(msg.t, 48, 600, 30, msg.c, 600, W - 96);
-  const mh = p.hover === 'mic';
-  c.beginPath(); c.arc(100, H - 82, 48, 0, Math.PI * 2); c.fillStyle = mh ? '#D4F5F7' : COL.mint; c.fill();
-  c.strokeStyle = mh ? COL.teal : COL.line; c.lineWidth = 4; c.stroke();
-  micIcon(c, 100, H - 82, 80, COL.teal);
-  p.hits.push({ x: 50, y: H - 132, w: 100, h: 100, id: 'mic', fn: () => { msg = { t: 'Voice replies arrive in Phase 2. For now, point and pull the trigger on a reply.', c: COL.grey }; choices.render(); } });
+  const mh = p.hover === 'mic', mc = listening ? COL.bad : COL.teal;
+  if (listening) { c.beginPath(); c.arc(100, H - 82, 60, 0, Math.PI * 2); c.strokeStyle = 'rgba(192,72,59,.35)'; c.lineWidth = 8; c.stroke(); }
+  c.beginPath(); c.arc(100, H - 82, 48, 0, Math.PI * 2); c.fillStyle = listening ? '#FBE3E0' : mh ? '#D4F5F7' : COL.mint; c.fill();
+  c.strokeStyle = listening ? COL.bad : mh ? COL.teal : COL.line; c.lineWidth = 4; c.stroke();
+  micIcon(c, 100, H - 82, 80, mc);
+  p.text(listening ? 'Listening… tap to stop' : 'Tap to speak', 176, H - 100, 30, listening ? COL.bad : COL.grey, 600, W - 620);
+  p.hits.push({ x: 50, y: H - 132, w: 100, h: 100, id: 'mic', fn: toggleMic });
   p.btn(W - 400, H - 130, 360, 90, 'Skip. Not sure.', 'skip', skip);
 }).place(1.05, 1.3, -1.45);
 
@@ -216,12 +219,88 @@ function speak(fr, audio, done) {
   } else tts();
 }
 
+
+/* ---------- voice replies: speech recognition (French, Canada) ---------- */
+// Works where the browser offers the Web Speech API (Chrome/Quest Browser with a speech service).
+// If it is missing or blocked, the reply buttons still work with point-and-trigger.
+const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+let srec = null, recTimer = null;
+const norm = (s) => s.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[’‘`]/g, "'").replace(/[^a-z0-9' ]+/g, ' ').replace(/\s+/g, ' ').trim();
+function lev(a, b) {
+  const d = Array.from({ length: a.length + 1 }, (_, i) => [i]);
+  for (let j = 1; j <= b.length; j++) d[0][j] = j;
+  for (let i = 1; i <= a.length; i++) for (let j = 1; j <= b.length; j++)
+    d[i][j] = Math.min(d[i - 1][j] + 1, d[i][j - 1] + 1, d[i - 1][j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+  return d[a.length][b.length];
+}
+// 0..1 closeness of what was heard to an expected reply (tolerates accents, punctuation, small recognition slips)
+function sim(heard, want) {
+  const a = norm(heard), b = norm(want);
+  if (!a || !b) return 0;
+  const whole = 1 - lev(a, b) / Math.max(a.length, b.length);
+  const ta = a.split(' '), tb = b.split(' '), used = new Set();
+  let hit = 0;
+  ta.forEach((x) => {
+    let bj = -1, bs = 0;
+    tb.forEach((y, j) => { if (used.has(j)) return; const sc = 1 - lev(x, y) / Math.max(x.length, y.length); if (sc > bs) { bs = sc; bj = j; } });
+    if (bs >= .75) { hit++; used.add(bj); }
+  });
+  return Math.max(whole, 2 * hit / (ta.length + tb.length));
+}
+function stopListening() {
+  clearTimeout(recTimer);
+  const was = listening;
+  listening = false;
+  if (srec) { const r = srec; srec = null; r.onresult = r.onerror = r.onend = null; try { r.abort(); } catch (e) {} }
+  if (was && choices.mesh.visible) choices.render();
+}
+function micError(code) {
+  if (code === 'not-allowed' || code === 'service-not-allowed') return 'The microphone is blocked. Allow the mic for this site, or point and pull the trigger on a reply.';
+  if (code === 'audio-capture') return 'No microphone found. Point and pull the trigger on a reply instead.';
+  if (code === 'network') return 'Voice needs an internet connection. Point and pull the trigger on a reply instead.';
+  if (code === 'no-speech') return 'I didn’t hear anything. Tap the mic and try again.';
+  return 'Voice did not work. Point and pull the trigger on a reply instead.';
+}
+function heardIt(alts) {
+  if (busy) return;
+  let best = null, bs = 0;
+  order.forEach((o) => alts.forEach((a) => { const sc = sim(a, o.fr); if (sc > bs) { bs = sc; best = o; } }));
+  if (best && bs >= .6) pick(best, alts[0]);
+  else wrong(`I heard “${alts[0]}”, which doesn’t match a reply. Tap a speaker icon to hear them, then try again.`);
+}
+function toggleMic() {
+  if (busy || paused || modal) return;
+  if (listening) { stopListening(); msg = { t: '', c: COL.grey }; return choices.render(); }
+  if (!SR) { msg = { t: 'Voice is not supported in this browser. Point and pull the trigger on a reply.', c: COL.bad }; return choices.render(); }
+  if (talking) { msg = { t: 'Wait until the barista has finished, then tap the mic.', c: COL.grey }; return choices.render(); }
+  try { synth && synth.cancel(); } catch (e) {}
+  const r = new SR();
+  srec = r; r.lang = 'fr-CA'; r.interimResults = false; r.continuous = false; r.maxAlternatives = 5;
+  let got = false;
+  r.onresult = (e) => {
+    got = true;
+    const alts = [...e.results[0]].map((x) => x.transcript).filter(Boolean);
+    stopListening();
+    if (alts.length) heardIt(alts);
+  };
+  r.onerror = (e) => { if (srec !== r) return; got = true; stopListening(); msg = { t: micError(e.error), c: e.error === 'no-speech' ? COL.grey : COL.bad }; choices.render(); };
+  r.onend = () => { if (srec !== r) return; stopListening(); if (!got) { msg = { t: micError('no-speech'), c: COL.grey }; choices.render(); } };
+  try {
+    r.start();
+    listening = true;
+    msg = { t: 'Listening… say your reply in French.', c: COL.teal };
+    recTimer = setTimeout(() => { if (srec === r) { try { r.stop(); } catch (e) {} } }, 9000);
+  } catch (e) { srec = null; msg = { t: micError('other'), c: COL.bad }; }
+  choices.render();
+}
+
 /* ---------- dialogue flow ---------- */
 const shuffle = (a) => a.map((v) => [Math.random(), v]).sort((x, y) => x[0] - y[0]).map((x) => x[1]);
 const renderAll = () => { bubble.render(); choices.render(); };
 
 function startTurn() {
   const t = LINES[turn];
+  stopListening();
   tries = 0; reveal = false; showEn = false; busy = false; msg = { t: '', c: COL.grey };
   order = shuffle(t.options.map((o, i) => ({ ...o, audio: `audio/${ap()}_opt${i + 1}.mp3` })));
   bubbleFr = t.fr; bubbleEn = t.en; talking = true;
@@ -230,8 +309,9 @@ function startTurn() {
   renderAll();
   speak(t.fr, `audio/${ap()}_barista.mp3`, () => { talking = false; });
 }
-function pick(o) {
+function pick(o, heard) {
   if (busy) return;
+  stopListening();
   const t = LINES[turn];
   if (o.ok) {
     busy = true;
@@ -239,16 +319,20 @@ function pick(o) {
     msg = { t: '✓ Très bien! ' + (t.note || ''), c: COL.ok };
     choices.render();
     speak(o.fr, o.audio, () => later(900, next));
-  } else {
-    tries++; showEn = tries >= 2; talking = true;
-    bubbleFr = 'Pardon? Je n’ai pas compris.'; bubbleEn = 'Sorry? I didn’t understand.';
-    msg = { t: 'Not quite. Tap a speaker icon to hear a reply, then try again.', c: COL.bad };
-    renderAll();
-    speak(bubbleFr, 'audio/pardon.mp3', () => { talking = false; bubbleFr = t.fr; bubbleEn = t.en; bubble.render(); });
-  }
+  } else wrong(heard ? `I heard “${heard}”. Not quite. Tap a speaker icon to hear a reply, then try again.` : 'Not quite. Tap a speaker icon to hear a reply, then try again.');
+}
+function wrong(text) {
+  if (busy) return;
+  const t = LINES[turn];
+  tries++; showEn = tries >= 2; talking = true;
+  bubbleFr = 'Pardon? Je n’ai pas compris.'; bubbleEn = 'Sorry? I didn’t understand.';
+  msg = { t: text, c: COL.bad };
+  renderAll();
+  speak(bubbleFr, 'audio/pardon.mp3', () => { talking = false; bubbleFr = t.fr; bubbleEn = t.en; bubble.render(); });
 }
 function skip() {
   if (busy) return;
+  stopListening();
   busy = true; reveal = true; showEn = true;
   const ok = LINES[turn].options.find((o) => o.ok);
   msg = { t: `A good reply: “${ok.fr}” (${ok.en})`, c: COL.teal };
@@ -639,6 +723,7 @@ const a11yP = new Panel(1.0, .98, (p) => {
 });
 pauseP.noScale = a11yP.noScale = true;
 function openModal(kind, from) {
+  stopListening();
   modal = kind; paused = true; a11yFrom = from || null;
   try { synth && synth.pause(); curAudio && curAudio.pause(); } catch (e) {}
   pauseP.mesh.visible = kind === 'pause'; a11yP.mesh.visible = kind === 'a11y';
