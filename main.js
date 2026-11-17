@@ -1,6 +1,10 @@
 import * as THREE from 'three';
 import { VRButton } from 'three/addons/webxr/VRButton.js';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { XRControllerModelFactory } from 'three/addons/webxr/XRControllerModelFactory.js';
+import { XRHandModelFactory } from 'three/addons/webxr/XRHandModelFactory.js';
 import { LINES, CAFE, ASSESS } from './dialogue.js';
+import { buildCafe } from './cafe3d.js';
 
 /* ---------- design tokens (from the Figma mid-fidelity file) ---------- */
 const COL = { teal: '#1F9AA0', ink: '#2C4A52', mint: '#EAFBFC', line: '#BFEDEF', grey: '#6B7C82', ok: '#0B9A6D', bad: '#C0483B' };
@@ -11,6 +15,11 @@ const renderer = new THREE.WebGLRenderer({ antialias: true });
 renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
 renderer.setSize(innerWidth, innerHeight);
 renderer.xr.enabled = true;
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.shadowMap.autoUpdate = false; // refreshed every few frames in the main loop (saves a lot of GPU time)
+renderer.shadowMap.needsUpdate = true;
+renderer.toneMappingExposure = 1.05;
 document.body.appendChild(renderer.domElement);
 document.body.appendChild(VRButton.createButton(renderer));
 const scene = new THREE.Scene();
@@ -80,7 +89,7 @@ class Panel {
     this.ctx = this.cv.getContext('2d');
     this.tex = new THREE.CanvasTexture(this.cv);
     this.tex.colorSpace = THREE.SRGBColorSpace;
-    this.mesh = new THREE.Mesh(new THREE.PlaneGeometry(w, h), new THREE.MeshBasicMaterial({ map: this.tex, transparent: true }));
+    this.mesh = new THREE.Mesh(new THREE.PlaneGeometry(w, h), new THREE.MeshBasicMaterial({ map: this.tex, transparent: true, toneMapped: false }));
     this.mesh.userData.panel = this;
     this.mesh.visible = false;
     scene.add(this.mesh);
@@ -135,7 +144,7 @@ const bubble = new Panel(1.3, 0.62, (p) => {
   c.beginPath(); c.roundRect(10, 10, W - 20, H - 80, 34); c.fill(); c.stroke();
   c.beginPath(); c.moveTo(80, H - 72); c.lineTo(46, H - 6); c.lineTo(170, H - 72); c.fill();
   const y = p.text(bubbleFr, 50, 44, 50, COL.ink, 700, W - 100);
-  if (showEn) p.text(bubbleEn, 50, y + 8, 36, COL.grey, 400, W - 100);
+  if (showEn || A.en) p.text(bubbleEn, 50, y + 8, 36, COL.grey, 400, W - 100);
 }).place(0.25, 2.1, -2.6);
 
 /* reply choices (Figma: "Use the microphone to reply…", speaker icons, mic, "Skip. Not sure.") */
@@ -149,7 +158,8 @@ const choices = new Panel(1.5, 1.3, (p) => {
     const y = 150 + i * 148, hv = p.hover === 'o' + i, hl = reveal && o.ok;
     p.rr(40, y, W - 80, 130, 22, hv ? COL.mint : '#fff', hl ? COL.ok : hv ? COL.teal : COL.line, hl ? 6 : 3);
     speakerIcon(c, 70, y + 35, 60, p.hover === 's' + i ? COL.ok : COL.teal);
-    p.text(o.fr, 160, y + 20, 36, COL.ink, 500, W - 240);
+    if (A.en) { const e = p.text(o.fr, 160, y + 12, 30, COL.ink, 500, W - 240); p.text(o.en, 160, e + 2, 24, COL.grey, 400, W - 240); }
+    else p.text(o.fr, 160, y + 20, 36, COL.ink, 500, W - 240);
     p.hits.push({ x: 56, y: y + 10, w: 96, h: 110, id: 's' + i, fn: () => speak(o.fr, o.audio) });
     p.hits.push({ x: 40, y, w: W - 80, h: 130, id: 'o' + i, fn: () => pick(o) });
   });
@@ -177,27 +187,32 @@ const result = new Panel(1.1, 1.1, (p) => {
 
 /* ---------- speech: recorded audio first, browser voice as placeholder ---------- */
 const synth = window.speechSynthesis;
+let curAudio = null, epoch = 0;
+const pend = [];
+const gate = (f) => (paused ? pend.push(f) : f());
 function speak(fr, audio, done) {
+  const ep = epoch;
   let finished = false;
-  const end = () => { if (!finished) { finished = true; done && done(); } };
+  const end = () => { if (!finished) { finished = true; if (done && ep === epoch) gate(done); } };
   const tts = () => {
-    if (!synth) return setTimeout(end, 1800);
+    if (!synth) return later(1800, end);
     synth.cancel();
     const u = new SpeechSynthesisUtterance(fr);
-    u.lang = 'fr-CA'; u.rate = 0.9;
+    u.lang = 'fr-CA'; u.rate = A.slow ? .65 : .9;
     const vs = synth.getVoices();
     const v = vs.find((x) => x.lang.replace('_', '-') === 'fr-CA') || vs.find((x) => x.lang.startsWith('fr'));
     if (v) u.voice = v;
     u.onend = end; u.onerror = end;
     synth.speak(u);
-    setTimeout(end, 9000);
+    later(A.slow ? 14000 : 9000, end);
   };
   if (audio) {
     let used = false;
     const fallback = () => { if (!used) { used = true; tts(); } };
-    const a = new Audio(audio);
-    a.onended = end; a.onerror = fallback;
-    a.play().catch(fallback);
+    const au = new Audio(audio);
+    au.playbackRate = A.slow ? .8 : 1; curAudio = au;
+    au.onended = end; au.onerror = fallback;
+    au.play().catch(fallback);
   } else tts();
 }
 
@@ -210,6 +225,8 @@ function startTurn() {
   tries = 0; reveal = false; showEn = false; busy = false; msg = { t: '', c: COL.grey };
   order = shuffle(t.options.map((o, i) => ({ ...o, audio: `audio/${ap()}_opt${i + 1}.mp3` })));
   bubbleFr = t.fr; bubbleEn = t.en; talking = true;
+  cupG.visible = mode === 'cafe' && turn === LINES.length - 1;
+  bubble.mesh.visible = choices.mesh.visible = true;
   renderAll();
   speak(t.fr, `audio/${ap()}_barista.mp3`, () => { talking = false; });
 }
@@ -221,7 +238,7 @@ function pick(o) {
     if (tries === 0 && !reveal) first++;
     msg = { t: '✓ Très bien! ' + (t.note || ''), c: COL.ok };
     choices.render();
-    speak(o.fr, o.audio, () => setTimeout(next, 900));
+    speak(o.fr, o.audio, () => later(900, next));
   } else {
     tries++; showEn = tries >= 2; talking = true;
     bubbleFr = 'Pardon? Je n’ai pas compris.'; bubbleEn = 'Sorry? I didn’t understand.';
@@ -236,17 +253,20 @@ function skip() {
   const ok = LINES[turn].options.find((o) => o.ok);
   msg = { t: `A good reply: “${ok.fr}” (${ok.en})`, c: COL.teal };
   renderAll();
-  speak(ok.fr, `audio/${ap()}_opt${LINES[turn].options.indexOf(ok) + 1}.mp3`, () => setTimeout(next, 1200));
+  speak(ok.fr, `audio/${ap()}_opt${LINES[turn].options.indexOf(ok) + 1}.mp3`, () => later(1200, next));
 }
 function next() {
+  const prev = LINES[turn];
   turn++;
+  if (prev && prev.pay && mode === 'cafe') return startPayment(prev.pay);
   if (turn < LINES.length) return startTurn();
   if (mode === 'assess') return finishAssess();
   score = +(first / LINES.length * 10).toFixed(1);
   res = { head: score >= 8 ? 'Excellent job!' : score >= 5 ? 'Bon travail!' : 'Keep practicing!', body: `You answered ${first} of ${LINES.length} replies correctly on the first try.`, btn: 'Play again', fn: playAgain };
-  setScene('result'); result.render();
+  cupLive = true; cupMsg = 'Votre cortado est prêt! Point at it and pull the trigger (or click) to grab it.';
+  bubble.mesh.visible = choices.mesh.visible = false; cupHint.mesh.visible = true; cupHint.render();
 }
-function goCafe() { transition(() => { loadScript(CAFE); mode = 'cafe'; setScene('cafe'); turn = 0; first = 0; startTurn(); }); }
+function goCafe() { transition(() => { resetCup(); resetPay(); loadScript(CAFE); mode = 'cafe'; setScene('cafe'); turn = 0; first = 0; startTurn(); }); }
 function playAgain() { goCafe(); }
 
 /* ---------- scenes ---------- */
@@ -268,6 +288,9 @@ function setScene(name) {
   scene.background = new THREE.Color(on('street', 'tip') ? '#a9d6f5' : on('dash') ? '#dfe5e9' : on('desk', 'deskintro', 'level') ? '#2a2f36' : on('cafe', 'result') ? '#1b1512' : '#271f33');
   scene.fog = on('street', 'tip') ? new THREE.Fog('#a9d6f5', 18, 50) : null;
   if (on('dash')) { globe.position.set(.95, 1.45, -2.1); globe.scale.setScalar(.6); } else { globe.position.set(0, .2, -7); globe.scale.setScalar(3.5); }
+  renderer.shadowMap.needsUpdate = true;
+  renderer.toneMapping = on('cafe', 'result') ? THREE.ACESFilmicToneMapping : THREE.NoToneMapping;
+  hud.mesh.visible = hudOn(); hudPlace(); hud.render();
   [loading, sign, dash, streetCard].forEach((p) => p.mesh.visible && p.render());
 }
 
@@ -297,54 +320,54 @@ for (const z of [-2, -9, -16]) {
 }
 new THREE.TextureLoader().load('assets/rosemont-360.jpg', (t) => {
   t.colorSpace = THREE.SRGBColorSpace;
-  const s = new THREE.Mesh(new THREE.SphereGeometry(50, 48, 32).scale(-1, 1, 1), new THREE.MeshBasicMaterial({ map: t, fog: false }));
-  s.position.y = 1.6; street.add(s); sty.visible = false;
+  const s = new THREE.Mesh(new THREE.SphereGeometry(50, 48, 32).scale(-1, 1, 1), new THREE.MeshBasicMaterial({ map: t, fog: false, toneMapped: false }));
+  s.position.y = 1.6; street.add(s); sty.visible = false; room.setOutside(t);
 }, undefined, () => {});
 
-/* Café interior */
-box(cafe, 6, .1, 6.5, '#a67c52', 0, -.05, -1.75);
-box(cafe, 6, .1, 6.5, '#f3ece2', 0, 3, -1.75);
-box(cafe, 6, 3, .1, '#e8dccb', 0, 1.5, -5);
-box(cafe, 6, 3, .1, '#e8dccb', 0, 1.5, 1.5);
-box(cafe, .1, 3, 6.5, '#e8dccb', -3, 1.5, -1.75);
-box(cafe, .1, 3, 6.5, '#d9c7b0', 3, 1.5, -1.75);
-box(cafe, .06, 1.4, 2, '#cfe9ff', -2.93, 1.7, -1).material = new THREE.MeshBasicMaterial({ color: '#d8efff' });
-box(cafe, 3.2, 1, .7, COL.ink, .4, .5, -2.2);
-box(cafe, 3.4, .06, .85, '#e9e2d6', .4, 1.03, -2.2);
-const machine = box(cafe, .7, .45, .5, '#b9bcc2', 1.3, 1.28, -2.3);
-box(cafe, .5, .08, .2, '#555', 1.3, 1.1, -2.1);
-const glass = box(cafe, 1, .5, .55, '#cfe9ee', -.9, 1.3, -2.2);
-glass.material = new THREE.MeshLambertMaterial({ color: '#cfe9ee', transparent: true, opacity: .35 });
-['#d9a15b', '#c9803f', '#e8c27a', '#b9733a'].forEach((c, i) => box(cafe, .14, .08, .14, c, -1.15 + i * .17, 1.1, -2.2));
-box(cafe, 3, .06, .3, '#7a5a3c', 0, 1.9, -4.85);
-[-1, -.4, .2, .8].forEach((x) => { const cup = new THREE.Mesh(new THREE.CylinderGeometry(.05, .04, .08, 10), M('#f6f3ee')); cup.position.set(x, 1.96, -4.85); cafe.add(cup); });
-canvasPlane(1.4, 1, 512, (c, w, h) => {
-  c.fillStyle = '#26343a'; c.fillRect(0, 0, w, h); c.fillStyle = '#f3efe6'; c.textBaseline = 'top';
-  c.font = `700 ${h * .13}px ${FONT}`; c.textAlign = 'center'; c.fillText('Menu', w / 2, h * .06);
-  const rows = [['Espresso', '3,00 $'], ['Cortado', '3,75 $'], ['Café filtre', '2,75 $'], ['Latté', '4,75 $'], ['Croissant', '3,25 $']];
-  c.font = `500 ${h * .085}px ${FONT}`;
-  rows.forEach((r, i) => { const y = h * .27 + i * h * .13; c.textAlign = 'left'; c.fillText(r[0], w * .1, y); c.textAlign = 'right'; c.fillText(r[1], w * .9, y); });
-}, cafe, 1.7, 2.15, -4.93);
-[[2.1, -.4], [-2.1, 0]].forEach(([x, z]) => {
-  const top = new THREE.Mesh(new THREE.CylinderGeometry(.4, .4, .05, 20), M('#7a5a3c')); top.position.set(x, .75, z); cafe.add(top);
-  const leg = new THREE.Mesh(new THREE.CylinderGeometry(.05, .05, .75, 8), M('#3b2f28')); leg.position.set(x, .37, z); cafe.add(leg);
-  [-.55, .55].forEach((dx) => { const st = new THREE.Mesh(new THREE.CylinderGeometry(.16, .16, .05, 14), M(COL.teal)); st.position.set(x + dx, .45, z); cafe.add(st); box(cafe, .04, .45, .04, '#3b2f28', x + dx, .22, z); });
-});
-[-1, 1].forEach((x) => {
-  box(cafe, .02, .6, .02, '#222', x, 2.7, -1.5);
-  const lamp = new THREE.Mesh(new THREE.SphereGeometry(.16, 14, 10), new THREE.MeshBasicMaterial({ color: '#ffd9a0' })); lamp.position.set(x, 2.35, -1.5); cafe.add(lamp);
-});
-const warm = new THREE.PointLight(0xffcf94, 14, 9, 2); warm.position.set(0, 2.5, -1.5); cafe.add(warm);
+/* Café interior: the realistic room lives in cafe3d.js */
+const room = buildCafe({ parent: cafe, renderer, FONT });
+const S = room.S;
 
-/* Barista */
+/* Barista: a stylised figure. To use a licensed realistic character, add assets/barista.glb (it replaces this one). */
 const barista = new THREE.Group(); barista.position.set(-.4, 0, -3.1); cafe.add(barista);
-const torso = new THREE.Mesh(new THREE.CylinderGeometry(.2, .25, .7, 16), M(COL.teal)); torso.position.y = 1.05; barista.add(torso);
-const head = new THREE.Group(); head.position.y = 1.54; barista.add(head);
-head.add(new THREE.Mesh(new THREE.SphereGeometry(.14, 20, 16), M('#e2b48f')));
-const hair = new THREE.Mesh(new THREE.SphereGeometry(.15, 20, 16, 0, Math.PI * 2, 0, Math.PI * .55), M('#3a2a20')); hair.position.y = .02; head.add(hair);
-[-.05, .05].forEach((x) => { const e = new THREE.Mesh(new THREE.SphereGeometry(.015, 8, 8), M('#222')); e.position.set(x, .02, .13); head.add(e); });
-const mouth = new THREE.Mesh(new THREE.BoxGeometry(.06, .012, .01), M('#7a2f2f')); mouth.position.set(0, -.05, .135); head.add(mouth);
-[-1, 1].forEach((s) => { const a = new THREE.Mesh(new THREE.CylinderGeometry(.045, .045, .55, 10), M(COL.teal)); a.position.set(s * .27, 1.1, .05); a.rotation.z = s * .12; barista.add(a); });
+const proc = new THREE.Group(); barista.add(proc);
+const skin = S({ color: '#d8a47c', roughness: .55, envMapIntensity: .25 });
+const shirtM = S({ color: '#f0ede6', roughness: .8, envMapIntensity: .2 });
+const apronM = S({ color: '#26332d', roughness: .85, envMapIntensity: .15, side: THREE.DoubleSide });
+const hairM = S({ color: '#3a281d', roughness: .7, envMapIntensity: .2 });
+const bp = (geo, mat, x, y, z, grp = proc) => { const m = new THREE.Mesh(geo, mat); m.position.set(x, y, z); m.castShadow = true; m.receiveShadow = true; grp.add(m); return m; };
+bp(new THREE.CylinderGeometry(.19, .21, .66, 24), shirtM, 0, 1.15, 0);
+bp(new THREE.CylinderGeometry(.205, .225, .5, 24, 1, true, -1.2, 2.4), apronM, 0, 1.02, .005);
+bp(new THREE.BoxGeometry(.27, .24, .02), apronM, 0, 1.36, .195);
+[-1, 1].forEach((sd) => { bp(new THREE.BoxGeometry(.025, .3, .015), apronM, sd * .09, 1.5, .1).rotation.x = -.35; });
+bp(new THREE.CylinderGeometry(.045, .055, .09, 14), skin, 0, 1.52, 0);
+const head = new THREE.Group(); head.position.y = 1.64; proc.add(head);
+bp(new THREE.SphereGeometry(.118, 28, 22), skin, 0, 0, 0, head).scale.set(1, 1.12, 1.02);
+bp(new THREE.SphereGeometry(.124, 28, 20, 0, Math.PI * 2, 0, Math.PI * .58), hairM, 0, .025, -.008, head).scale.set(1, 1.1, 1.05);
+bp(new THREE.SphereGeometry(.05, 14, 10), hairM, 0, .13, -.07, head);
+[-.045, .045].forEach((x) => {
+  bp(new THREE.SphereGeometry(.016, 12, 10), S({ color: '#ffffff', roughness: .3 }), x, .018, .105, head);
+  bp(new THREE.SphereGeometry(.009, 10, 8), S({ color: '#2b1d14', roughness: .2 }), x, .018, .119, head);
+  bp(new THREE.BoxGeometry(.04, .008, .01), hairM, x, .058, .112, head).rotation.z = x > 0 ? .12 : -.12;
+});
+bp(new THREE.SphereGeometry(.014, 10, 8), skin, 0, -.012, .12, head);
+[-1, 1].forEach((sd) => bp(new THREE.SphereGeometry(.02, 10, 8), skin, sd * .116, 0, 0, head));
+const mouth = bp(new THREE.BoxGeometry(.05, .01, .01), S({ color: '#8a3a3a', roughness: .5 }), 0, -.05, .108, head);
+[-1, 1].forEach((sd) => {
+  const sh = new THREE.Group(); sh.position.set(sd * .235, 1.4, 0); sh.rotation.x = -.35; proc.add(sh);
+  bp(new THREE.CylinderGeometry(.04, .036, .3, 14), shirtM, 0, -.15, 0, sh);
+  const el = new THREE.Group(); el.position.y = -.3; el.rotation.x = -1.15; sh.add(el);
+  bp(new THREE.CylinderGeometry(.033, .028, .26, 14), skin, 0, -.13, 0, el);
+  bp(new THREE.SphereGeometry(.036, 12, 10), skin, 0, -.28, 0, el);
+});
+let mixer = null;
+new GLTFLoader().load('assets/barista.glb', (g) => {
+  const m = g.scene, bb = new THREE.Box3().setFromObject(m), k = 1.72 / (bb.max.y - bb.min.y);
+  m.scale.setScalar(k); m.position.y = -bb.min.y * k;
+  m.traverse((o) => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
+  barista.add(m); proc.visible = false;
+  if (g.animations.length) { mixer = new THREE.AnimationMixer(m); mixer.clipAction(g.animations[0]).play(); }
+}, undefined, () => {});
 
 /* ---------- app flow: loading → sign-in → dashboard → info desk → module ---------- */
 const loadScript = (a) => LINES.splice(0, LINES.length, ...a);
@@ -353,7 +376,7 @@ let card = { t: 'You are located in the Rosemont neighbourhood. Enter the café 
 let res = { head: '', body: '', btn: 'Play again', fn: playAgain };
 const ap = () => (mode === 'assess' ? 'a' : 't') + (turn + 1);
 const code = Array.from({ length: 9 }, () => 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'[Math.random() * 32 | 0]).join(' ');
-const later = (ms, fn) => setTimeout(fn, ms);
+const later = (ms, fn) => { const ep = epoch; setTimeout(() => { if (ep === epoch) gate(fn); }, ms); };
 
 function logo(c, x, y, s, hole) {
   c.fillStyle = COL.ok; c.beginPath(); c.arc(x, y, s, 0, 7); c.fill();
@@ -482,6 +505,11 @@ const rec = makePerson(desk, -.5, -3.1, '#1d1d22', '#b8531f');
 
 /* flow */
 function boot() {
+  const go = new URLSearchParams(location.search).get('start'); // e.g. ?start=cafe, ?start=pay, ?start=street, ?start=dash, ?start=desk
+  if (go === 'cafe' || go === 'pay') { loadScript(CAFE); mode = 'cafe'; first = 0; setScene('cafe'); turn = go === 'pay' ? 2 : 0; return go === 'pay' ? next() : startTurn(); }
+  if (go === 'street') return setScene('street');
+  if (go === 'dash') { dState = 'lang'; return setScene('dash'); }
+  if (go === 'desk') return toDesk();
   setScene('load');
   later(2600, () => { setScene('signin'); later(3500, () => { setScene('welcome'); later(2200, () => transition(() => { dState = 'lang'; setScene('dash'); })); }); });
 }
@@ -505,27 +533,237 @@ function beginModule() {
   });
 }
 
+/* ---------- cortado to grab at the end of the module ---------- */
+let cupLive = false, cupHeld = null, cupMsg = '', mouseCup = null;
+const cupT = new THREE.Vector3();
+const cupG = new THREE.Group(); cupG.position.set(.55, 1.052, -1.98); cupG.scale.setScalar(1.3); cupG.visible = false; cafe.add(cupG);
+const cupMat = new THREE.MeshLambertMaterial({ color: '#f6f3ee' });
+const saucer = new THREE.Mesh(new THREE.CylinderGeometry(.065, .055, .01, 20), cupMat); saucer.position.y = .005; cupG.add(saucer);
+const cupBody = new THREE.Mesh(new THREE.CylinderGeometry(.038, .028, .055, 20), cupMat); cupBody.position.y = .04; cupG.add(cupBody);
+const cupHandle = new THREE.Mesh(new THREE.TorusGeometry(.016, .004, 6, 12), cupMat); cupHandle.position.set(.042, .042, 0); cupG.add(cupHandle);
+const coffee = new THREE.Mesh(new THREE.CylinderGeometry(.033, .033, .004, 20), M('#5a3a22')); coffee.position.y = .066; cupG.add(coffee);
+const cupGrab = new THREE.Mesh(new THREE.SphereGeometry(.14, 8, 6), new THREE.MeshBasicMaterial({ visible: false })); cupGrab.position.y = .05; cupG.add(cupGrab);
+room.steam(cupG, 0, .085, 0, 1);
+const cupHint = new Panel(1.1, .34, (p) => {
+  const W = p.cv.width, H = p.cv.height;
+  p.rr(4, 4, W - 8, H - 8, 30, 'rgba(244,251,252,.95)', COL.line);
+  p.text(cupMsg, W / 2, 30, 46, COL.teal, 700, W - 80, 'center');
+}).place(.55, 1.6, -1.9);
+function resetCup() {
+  cupLive = false; cupHeld = null; cupG.visible = false; saucer.visible = true;
+  cupG.position.set(.55, 1.052, -1.98); cupG.scale.setScalar(1.3); cupHint.mesh.visible = false;
+}
+function grabCup(c) {
+  if (!cupLive) return;
+  cupLive = false; cupHeld = c || 'mouse'; cupG.scale.setScalar(1); saucer.visible = false;
+  try { c.userData.src.gamepad.hapticActuators[0].pulse(.7, 90); } catch (e) {}
+  cupMsg = 'Santé! Bon appétit!'; cupHint.render();
+  later(2600, () => { cupHint.mesh.visible = false; setScene('result'); result.render(); });
+}
+
+/* ---------- accessibility settings (remembered on this device) ---------- */
+const A = Object.assign({ en: false, big: false, slow: false, calm: false, seat: false }, (() => { try { return JSON.parse(localStorage.getItem('fvr-a11y')) || {}; } catch (e) { return {}; } })());
+let paused = false, modal = null, a11yFrom = null;
+
+/* ---------- top-right buttons (Figma: pause + accessibility) ---------- */
+function iconPause(c, cx, cy, s, col) {
+  c.fillStyle = col;
+  c.beginPath(); c.roundRect(cx - s * .32, cy - s * .36, s * .24, s * .72, s * .07); c.fill();
+  c.beginPath(); c.roundRect(cx + s * .08, cy - s * .36, s * .24, s * .72, s * .07); c.fill();
+}
+function iconAccess(c, cx, cy, s, col) {
+  c.fillStyle = col; c.strokeStyle = col; c.lineCap = 'round'; c.lineJoin = 'round'; c.lineWidth = s * .12;
+  c.beginPath(); c.arc(cx, cy - s * .38, s * .12, 0, 7); c.fill();
+  c.beginPath(); c.moveTo(cx - s * .42, cy - s * .16); c.lineTo(cx, cy - s * .05); c.lineTo(cx + s * .42, cy - s * .16); c.stroke();
+  c.beginPath(); c.moveTo(cx, cy - s * .05); c.lineTo(cx, cy + s * .14); c.stroke();
+  c.beginPath(); c.moveTo(cx - s * .3, cy + s * .44); c.lineTo(cx, cy + s * .14); c.lineTo(cx + s * .3, cy + s * .44); c.stroke();
+}
+const HUD_PAUSE = ['deskintro', 'desk', 'level', 'street', 'cafe', 'result'];
+const hudOn = () => HUD_PAUSE.includes(cur) || cur === 'dash';
+const hud = new Panel(.34, .14, (p) => {
+  const c = p.ctx, W = p.cv.width, H = p.cv.height, cy = H / 2, R = 150;
+  const draw = (cx, id, icon, fn) => {
+    const hv = p.hover === id;
+    c.beginPath(); c.arc(cx, cy, R, 0, 7); c.fillStyle = hv ? 'rgba(31,154,160,.95)' : 'rgba(18,30,36,.55)'; c.fill();
+    c.lineWidth = 7; c.strokeStyle = 'rgba(255,255,255,.85)'; c.stroke();
+    icon(c, cx, cy, R * 1.15, '#ffffff');
+    p.hits.push({ x: cx - R, y: cy - R, w: 2 * R, h: 2 * R, id, fn });
+  };
+  if (HUD_PAUSE.includes(cur)) draw(W * .3, 'pause', iconPause, () => (modal === 'pause' ? closeModal() : openModal('pause')));
+  draw(W * .74, 'access', iconAccess, () => (modal === 'a11y' ? closeModal() : openModal('a11y')));
+});
+hud.noScale = true;
+function frontOf(mesh, dist, dy = 0) {
+  camera.updateWorldMatrix(true, false);
+  camera.getWorldPosition(o3); camera.getWorldDirection(d3); d3.y = 0;
+  if (d3.lengthSq() < 1e-4) d3.set(0, 0, -1);
+  d3.normalize();
+  mesh.position.set(o3.x + d3.x * dist, o3.y + dy, o3.z + d3.z * dist);
+  mesh.lookAt(o3.x, mesh.position.y, o3.z);
+}
+function hudPlace() {
+  camera.updateWorldMatrix(true, false);
+  camera.getWorldPosition(o3); camera.getWorldDirection(d3); d3.y = 0;
+  if (d3.lengthSq() < 1e-4) d3.set(0, 0, -1);
+  d3.normalize();
+  hud.mesh.position.set(o3.x + d3.x * 1.1 - d3.z * .68, o3.y + .42, o3.z + d3.z * 1.1 + d3.x * .68);
+  hud.mesh.lookAt(o3.x, hud.mesh.position.y, o3.z);
+}
+
+/* ---------- pause menu + accessibility panel ---------- */
+const pauseP = new Panel(.9, .64, (p) => {
+  const W = p.cv.width;
+  p.rr(4, 4, W - 8, p.cv.height - 8, 44, 'rgba(255,255,255,.98)', COL.line);
+  p.text('Paused', W / 2, 44, 64, COL.teal, 700, W, 'center');
+  p.text('Nothing moves while you are paused. Take your time.', W / 2, 130, 30, COL.grey, 400, W - 140, 'center');
+  p.btn(80, 220, W - 160, 100, 'Resume', 'resume', closeModal);
+  p.btn(80, 345, W - 160, 100, 'Accessibility settings', 'acc', () => openModal('a11y', 'pause'));
+  p.btn(80, 470, W - 160, 100, 'Back to dashboard', 'home', goHome);
+});
+const A_ROWS = [['en', 'English translations', 'Show English under every French line'], ['big', 'Larger panels', 'Make cards and menus bigger'], ['slow', 'Slower speech', 'The barista speaks more slowly'], ['seat', 'Seated mode', 'Raises your view if you are sitting'], ['calm', 'Reduce motion', 'No screen fades between scenes']];
+const a11yP = new Panel(1.0, .98, (p) => {
+  const c = p.ctx, W = p.cv.width, H = p.cv.height;
+  p.rr(4, 4, W - 8, H - 8, 44, 'rgba(255,255,255,.98)', COL.line);
+  p.text('Accessibility', W / 2, 36, 60, COL.teal, 700, W, 'center');
+  A_ROWS.forEach(([k, t, sub], i) => {
+    const y = 130 + i * 140, hv = p.hover === 'k' + k;
+    p.rr(40, y, W - 80, 120, 22, hv ? COL.mint : '#fff', hv ? COL.teal : COL.line);
+    p.text(t, 70, y + 18, 38, COL.ink, 600, W - 300);
+    p.text(sub, 70, y + 68, 26, COL.grey, 400, W - 300);
+    const on = A[k], sx = W - 190, sy = y + 30;
+    p.rr(sx, sy, 110, 60, 30, on ? COL.teal : '#c9d3d6');
+    c.beginPath(); c.arc(on ? sx + 80 : sx + 30, sy + 30, 24, 0, 7); c.fillStyle = '#fff'; c.fill();
+    p.hits.push({ x: 40, y, w: W - 80, h: 120, id: 'k' + k, fn: () => { A[k] = !A[k]; applyA(); } });
+  });
+  p.btn(W / 2 - 200, H - 130, 400, 90, 'Done', 'done', () => (a11yFrom === 'pause' ? openModal('pause') : closeModal()));
+});
+pauseP.noScale = a11yP.noScale = true;
+function openModal(kind, from) {
+  modal = kind; paused = true; a11yFrom = from || null;
+  try { synth && synth.pause(); curAudio && curAudio.pause(); } catch (e) {}
+  pauseP.mesh.visible = kind === 'pause'; a11yP.mesh.visible = kind === 'a11y';
+  const p = kind === 'pause' ? pauseP : a11yP;
+  frontOf(p.mesh, 1.0); p.render();
+}
+function closeModal() {
+  modal = null; paused = false; pauseP.mesh.visible = a11yP.mesh.visible = false;
+  try {
+    synth && synth.resume();
+    if (curAudio && curAudio.paused && !curAudio.ended && curAudio.currentTime > 0) curAudio.play().catch(() => {});
+  } catch (e) {}
+  pend.splice(0).forEach((f) => f());
+}
+function goHome() {
+  modal = null; paused = false; pauseP.mesh.visible = a11yP.mesh.visible = false;
+  epoch++; pend.length = 0; talking = false;
+  try { synth && synth.cancel(); curAudio && curAudio.pause(); } catch (e) {}
+  resetCup(); resetPay(); fadeT = null; fade.material.opacity = 0;
+  dState = 'lang'; gT = null; transition(() => setScene('dash'));
+}
+function applyA() {
+  panels.forEach((p) => { if (!p.noScale) p.mesh.scale.setScalar(A.big ? 1.25 : 1); });
+  rig.position.y = A.seat ? .4 : 0;
+  hudPlace();
+  [bubble, choices, a11yP, pauseP].forEach((p) => p.mesh.visible && p.render());
+  try { localStorage.setItem('fvr-a11y', JSON.stringify(A)); } catch (e) {}
+}
+
+/* ---------- payment: tap your card on the terminal ---------- */
+const PAY_Z = -1.4;
+const v3 = new THREE.Vector3(), w3 = new THREE.Vector3();
+let payOn = false, payDone = true, payHolder = null, payNear = 0, mouseTerm = null, actx = null;
+const card3d = room.makeCard();
+const payHint = new Panel(.8, .3, (p) => {
+  const W = p.cv.width, H = p.cv.height;
+  p.rr(4, 4, W - 8, H - 8, 34, 'rgba(244,251,252,.96)', COL.line);
+  p.text('Tap your card on the terminal to pay.', 40, 28, 40, COL.teal, 700, W - 80);
+  p.text('You can also point at the terminal and pull the trigger.', 40, 96, 28, COL.grey, 400, W - 80);
+  p.btn(W - 280, H - 100, 240, 76, 'Skip', 'skiptap', tapDone);
+});
+function beep() {
+  try {
+    actx = actx || new (window.AudioContext || window.webkitAudioContext)();
+    const o = actx.createOscillator(), g = actx.createGain(), n = actx.currentTime;
+    o.type = 'sine'; o.frequency.setValueAtTime(1046, n); o.frequency.setValueAtTime(1568, n + .12);
+    g.gain.setValueAtTime(.0001, n); g.gain.exponentialRampToValueAtTime(.25, n + .01); g.gain.exponentialRampToValueAtTime(.0001, n + .34);
+    o.connect(g); g.connect(actx.destination); o.start(n); o.stop(n + .36);
+  } catch (e) {}
+}
+function pickHand() {
+  if (!renderer.xr.isPresenting) return 'mouse';
+  return ctrls.find((c) => c.userData.src && c.userData.src.handedness === 'right') || ctrls.find((c) => c.userData.src) || ctrls[1];
+}
+function startPayment(p) {
+  busy = true; payDone = false;
+  transition(() => {
+    rig.position.z = PAY_Z; hudPlace();
+    choices.mesh.visible = false;
+    room.terminal.setState('pay');
+    payHolder = pickHand(); payNear = 0; payOn = true;
+    if (payHolder === 'mouse') { camera.add(card3d); card3d.position.set(.2, -.2, -.55); card3d.rotation.set(1.0, 0, -.15); card3d.scale.setScalar(1.5); }
+    else { payHolder.add(card3d); card3d.position.set(0, -.012, -.1); card3d.rotation.set(0, 0, 0); card3d.scale.setScalar(1); }
+    payHint.mesh.position.set(.3, 1.5, -2.05); payHint.mesh.lookAt(0, 1.5, PAY_Z); payHint.mesh.visible = true; payHint.render();
+    bubbleFr = p.fr; bubbleEn = p.en; showEn = true; talking = true; bubble.render();
+    speak(p.fr, 'audio/pay.mp3', () => { talking = false; });
+  });
+}
+function tapDone() {
+  if (!payOn || payDone) return;
+  payDone = true;
+  room.terminal.setState('ok'); beep();
+  try { if (payHolder && payHolder !== 'mouse') payHolder.userData.src.gamepad.hapticActuators[0].pulse(.8, 120); } catch (e) {}
+  payHint.mesh.visible = false;
+  bubbleFr = 'Parfait, c’est approuvé. Merci!'; bubbleEn = 'Perfect, it’s approved. Thank you!'; showEn = true; talking = true; bubble.render();
+  speak(bubbleFr, 'audio/pay_ok.mp3', () => { talking = false; });
+  later(2800, endPayment);
+}
+function endPayment() {
+  transition(() => {
+    rig.position.z = 0; hudPlace(); card3d.removeFromParent(); payOn = false; payHolder = null;
+    room.terminal.setState('idle'); room.terminal.ring.visible = false;
+    startTurn();
+  });
+}
+function resetPay() {
+  payOn = false; payDone = true; payHolder = null; payNear = 0;
+  rig.position.z = 0; card3d.removeFromParent(); payHint.mesh.visible = false;
+  room.terminal.setState('idle'); room.terminal.ring.visible = false;
+}
+
 /* ---------- scene fade ---------- */
 const fade = new THREE.Mesh(new THREE.PlaneGeometry(4, 4), new THREE.MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: 0, depthTest: false }));
 fade.position.z = -.3; fade.renderOrder = 999; camera.add(fade);
 let fadeT = null;
-function transition(fn) { if (!fadeT) fadeT = { t: 0, fn, done: false }; }
+function transition(fn) { if (A.calm) return fn(); if (!fadeT) fadeT = { t: 0, fn, done: false }; }
 
 /* ---------- pointing: VR controllers / hands + mouse preview ---------- */
 const ray = new THREE.Raycaster();
 const tmpM = new THREE.Matrix4(), o3 = new THREE.Vector3(), d3 = new THREE.Vector3();
 const shown = (o) => { for (; o; o = o.parent) if (!o.visible) return false; return true; };
 const intersect = () => ray.intersectObjects(panels.filter((p) => shown(p.mesh)).map((p) => p.mesh), false)[0];
-const clickHit = (h) => { const b = h.object.userData.panel.at(h.uv); if (b) b.fn(); };
+const clickHit = (h) => { const p = h.object.userData.panel; if (modal && p !== hud && p !== pauseP && p !== a11yP) return; const b = p.at(h.uv); if (b) b.fn(); };
 
 const ctrls = [0, 1].map((i) => {
   const c = renderer.xr.getController(i);
   const line = new THREE.Line(new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(), new THREE.Vector3(0, 0, -1)]), new THREE.LineBasicMaterial({ color: 0x1F9AA0 }));
   line.scale.z = 2; c.add(line); c.userData.line = line;
-  c.addEventListener('selectstart', () => { if (c.userData.hit) clickHit(c.userData.hit); });
+  c.addEventListener('connected', (e) => { c.userData.src = e.data; });
+  c.addEventListener('selectstart', () => {
+    if (!paused && c.userData.cup) return grabCup(c);
+    if (!paused && c.userData.term) return tapDone();
+    if (c.userData.hit) clickHit(c.userData.hit);
+  });
   rig.add(c);
   return c;
 });
+
+{ // show the real controllers / hands in VR
+  const cmf = new XRControllerModelFactory(), hmf = new XRHandModelFactory();
+  [0, 1].forEach((i) => {
+    try { const g = renderer.xr.getControllerGrip(i); g.add(cmf.createControllerModel(g)); rig.add(g); } catch (e) {}
+    try { const h = renderer.xr.getHand(i); h.add(hmf.createHandModel(h, 'mesh')); rig.add(h); } catch (e) {}
+  });
+}
 
 const mouse = new THREE.Vector2(); let mouseOn = false, mouseHit = null, drag = null;
 addEventListener('pointermove', (e) => {
@@ -537,15 +775,17 @@ addEventListener('pointermove', (e) => {
   }
 });
 renderer.domElement.addEventListener('pointerdown', (e) => { drag = { x: e.clientX, y: e.clientY, moved: 0 }; });
-addEventListener('pointerup', () => { if (drag && drag.moved < 6 && mouseHit && !renderer.xr.isPresenting) clickHit(mouseHit); drag = null; });
+addEventListener('pointerup', () => { if (drag && drag.moved < 6 && !renderer.xr.isPresenting) { if (!paused && mouseCup) grabCup(null); else if (!paused && mouseTerm) tapDone(); else if (mouseHit) clickHit(mouseHit); } drag = null; });
 
 /* ---------- main loop ---------- */
 const clock = new THREE.Clock();
-document.fonts && document.fonts.ready.then(() => panels.forEach((p) => p.mesh.visible && p.render()));
+let shadowTick = 0;
+document.fonts && document.fonts.ready.then(() => { panels.forEach((p) => p.mesh.visible && p.render()); room.refresh(); });
+applyA();
 boot();
 
 renderer.setAnimationLoop(() => {
-  const dt = Math.min(clock.getDelta(), .1), t = clock.elapsedTime;
+  const dt = Math.min(clock.getDelta(), .1) * (paused ? 0 : 1), t = clock.elapsedTime, talkNow = talking && !paused;
   const want = new Map();
   for (const c of ctrls) {
     tmpM.identity().extractRotation(c.matrixWorld);
@@ -553,23 +793,42 @@ renderer.setAnimationLoop(() => {
     ray.set(o3, d3);
     const h = renderer.xr.isPresenting ? intersect() : null;
     c.userData.hit = h; c.userData.line.scale.z = h ? h.distance : 2;
+    c.userData.cup = cupLive && renderer.xr.isPresenting ? ray.intersectObject(cupGrab, false)[0] || null : null;
+    c.userData.term = payOn && !payDone && renderer.xr.isPresenting ? ray.intersectObject(room.terminal.hit, false)[0] || null : null;
     if (h) { const p = h.object.userData.panel, b = p.at(h.uv); want.set(p, b ? b.id : null); }
   }
-  mouseHit = null;
+  mouseHit = null; mouseCup = null; mouseTerm = null;
   if (mouseOn && !renderer.xr.isPresenting) {
     ray.setFromCamera(mouse, camera);
     mouseHit = intersect() || null;
+    if (cupLive) mouseCup = ray.intersectObject(cupGrab, false)[0] || null;
+    if (payOn && !payDone) mouseTerm = ray.intersectObject(room.terminal.hit, false)[0] || null;
     if (mouseHit) { const p = mouseHit.object.userData.panel, b = p.at(mouseHit.uv); want.set(p, b ? b.id : null); }
-    renderer.domElement.style.cursor = mouseHit && want.get(mouseHit.object.userData.panel) ? 'pointer' : 'default';
+    renderer.domElement.style.cursor = (mouseHit && want.get(mouseHit.object.userData.panel)) || mouseCup || mouseTerm ? 'pointer' : 'default';
   }
   panels.forEach((p) => { if (p.mesh.visible) p.setHover(want.get(p) ?? null); });
 
+  room.update(t);
+  if ((shadowTick = (shadowTick + 1) % 6) === 0) renderer.shadowMap.needsUpdate = true;
+  if (mixer) mixer.update(dt);
+  if (payOn && !payDone && !paused) {
+    let near = false;
+    if (payHolder && payHolder !== 'mouse') { room.terminal.anchor.getWorldPosition(w3); card3d.getWorldPosition(v3); near = v3.distanceTo(w3) < .13; }
+    payNear = near ? payNear + dt : Math.max(0, payNear - dt * 2);
+    room.terminal.tick(t, true, near);
+    if (payNear > .3) tapDone();
+  } else room.terminal.tick(t, false, false);
   barista.position.y = Math.sin(t * 1.5) * .005;
-  head.rotation.z = talking ? Math.sin(t * 7) * .05 : Math.sin(t * .8) * .02;
-  mouth.scale.y = talking ? 1 + Math.abs(Math.sin(t * 14)) * 5 : 1;
+  head.rotation.z = talkNow ? Math.sin(t * 7) * .05 : Math.sin(t * .8) * .02;
+  mouth.scale.y = talkNow ? 1 + Math.abs(Math.sin(t * 14)) * 5 : 1;
 
-  rec.head.rotation.z = talking ? Math.sin(t * 7) * .05 : 0;
-  rec.mouth.scale.y = talking ? 1 + Math.abs(Math.sin(t * 14)) * 5 : 1;
+  if (cupHeld) {
+    if (cupHeld === 'mouse') cupT.set(.2, -.25, -.55).applyMatrix4(camera.matrixWorld); else cupT.set(0, -.04, -.12).applyMatrix4(cupHeld.matrixWorld);
+    cupG.position.lerp(cupT, Math.min(1, dt * 10));
+  }
+  cupMat.emissive.set(cupLive && (mouseCup || ctrls.some((c) => c.userData.cup)) ? '#1F9AA0' : '#000000');
+  rec.head.rotation.z = talkNow ? Math.sin(t * 7) * .05 : 0;
+  rec.mouth.scale.y = talkNow ? 1 + Math.abs(Math.sin(t * 14)) * 5 : 1;
   if (globe.visible) {
     if (gT) { const k = Math.min(1, dt * 2.5); globe.rotation.y += (gT.y - globe.rotation.y) * k; globe.rotation.x += (gT.x - globe.rotation.x) * k; } else globe.rotation.y += dt * .08;
   }
