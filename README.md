@@ -1,7 +1,3 @@
-# Un cortado à Rosemont: French VR prototype (Phase 1)
-
-A WebXR scene for Meta Quest 3: arrive on a Rosemont street in Montréal, enter a café, and order a cortado from the barista.
-
 ## Publish on GitHub Pages
 1. Create a new **public** repository (for example `french-vr-cafe`).
 2. Upload everything in this folder (`index.html`, `main.js`, `cafe3d.js`, `dialogue.js`, and later the `audio/` and `assets/` folders). Keep the same structure.
@@ -54,3 +50,10 @@ All dialogue lives in `dialogue.js`. Change the French, the English hints, or wh
 ## Voice replies: notes
 - Uses the browser's built-in French (Canada) speech recognition, so it needs a browser that offers it, an internet connection and microphone permission. Test on the Quest first; if it is unavailable the panel says so and point-and-trigger is the fallback.
 - Matching threshold is set in `main.js` (`heardIt`, currently 0.6). Raise it to be stricter, lower it to be more forgiving.
+
+## Phase 2b: interface updates
+- **Reply panel:** the microphone is grey and disabled until a reply is selected. Tap a reply (the speaker icons play each option), then tap the mic and say it. The game checks what you said against the reply you selected. If voice is not available the panel says so and tapping a reply chooses it directly. The Skip button has a soft iridescent fill with grey text.
+- **Dashboard carousels:** arrow buttons under the language and location carousels (left and right arrow keys on a keyboard also scroll them).
+- **Popular French-speaking locations:** shown after you pick French. Choose one from the carousel, **View All**, or by clicking it on the globe. A marker fades in on the globe. Only Montréal continues to a module.
+- **Globe:** drag to spin it, click a location dot to choose it.
+- **Location photos:** put `loc_nice.jpg`, `loc_geneva.jpg`, `loc_montreal.jpg`, `loc_paris.jpg` (and optionally `loc_quebec.jpg`, `loc_brussels.jpg`, `loc_dakar.jpg`) in the `assets/` folder. Locations without a photo show a coloured tile.
