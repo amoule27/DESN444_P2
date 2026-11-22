@@ -167,25 +167,22 @@ const choices = new Panel(1.5, 1.3, (p) => {
   });
   p.text(msg.t, 48, 600, 30, msg.c, 600, W - 96);
   // microphone: grey and disabled until a reply is selected (Figma frame 17), teal when ready (frame 59)
-  const micOn = voiceOK() && sel >= 0 && !busy, mh = p.hover === 'mic' && micOn, mc = listening ? COL.bad : micOn ? '#4A9798' : '#A5A5A5';
-  if (listening) { c.beginPath(); c.arc(100, H - 82, 66, 0, Math.PI * 2); c.strokeStyle = 'rgba(192,72,59,.3)'; c.lineWidth = 8; c.stroke(); }
-  c.save(); c.shadowColor = 'rgba(0,0,0,.22)'; c.shadowBlur = 16; c.shadowOffsetY = 7;
-  c.beginPath(); c.arc(100, H - 82, 52, 0, Math.PI * 2);
-  const mg = c.createLinearGradient(100, H - 134, 100, H - 30); mg.addColorStop(0, '#F8FAFB'); mg.addColorStop(1, '#EEF1F4');
+  const MR = 60, MY = H - 90, micOn = voiceOK() && sel >= 0 && !busy, mh = p.hover === 'mic' && micOn, mc = listening ? COL.bad : micOn ? '#4A9798' : '#A5A5A5';
+  if (listening) { c.beginPath(); c.arc(106, MY, MR + 14, 0, Math.PI * 2); c.strokeStyle = 'rgba(192,72,59,.3)'; c.lineWidth = 8; c.stroke(); }
+  c.save(); c.shadowColor = 'rgba(0,0,0,.22)'; c.shadowBlur = 18; c.shadowOffsetY = 8;
+  c.beginPath(); c.arc(106, MY, MR, 0, Math.PI * 2);
+  const mg = c.createLinearGradient(106, MY - MR, 106, MY + MR); mg.addColorStop(0, '#F8FAFB'); mg.addColorStop(1, '#EEF1F4');
   c.fillStyle = listening ? '#FBE3E0' : mh ? '#E6F8F8' : mg; c.fill(); c.restore();
-  c.beginPath(); c.arc(100, H - 82, 52, 0, Math.PI * 2); c.strokeStyle = listening ? COL.bad : micOn ? '#B9DADA' : '#A5A5A5'; c.lineWidth = 5; c.stroke();
-  micIcon(c, 100, H - 82, 86, mc);
+  c.beginPath(); c.arc(106, MY, MR, 0, Math.PI * 2); c.strokeStyle = listening ? COL.bad : micOn ? '#B9DADA' : '#A5A5A5'; c.lineWidth = 5; c.stroke();
+  micIcon(c, 106, MY, 100, mc);
   const lab = !voiceOK() ? '' : listening ? 'Listening… tap to stop' : micOn ? 'Tap to speak' : 'Select a reply first';
-  p.text(lab, 176, H - 100, 30, listening ? COL.bad : micOn ? COL.teal : COL.grey, 600, W - 620);
-  p.hits.push({ x: 50, y: H - 132, w: 100, h: 100, id: 'mic', fn: toggleMic });
-  // skip: soft iridescent fill, no stroke, grey text (Figma)
+  p.text(lab, 190, MY - 18, 30, listening ? COL.bad : micOn ? COL.teal : COL.grey, 600, W - 640);
+  p.hits.push({ x: 46, y: MY - MR, w: MR * 2, h: MR * 2, id: 'mic', fn: toggleMic });
+  // skip: plain grey text, no fill or stroke
   const sx = W - 400, sy = H - 130, sw = 360, sh = 90, sk = p.hover === 'skip';
-  const ig = c.createLinearGradient(sx, sy, sx + sw, sy + sh);
-  [[0, '#C9E4FF'], [.34, '#E1D2F8'], [.68, '#C8F0E0'], [1, '#FAE0CC']].forEach(([o, col]) => ig.addColorStop(o, col));
-  c.save(); c.globalAlpha = sk ? 1 : .92; p.rr(sx, sy, sw, sh, 24, ig); c.restore();
   p.text('Skip. Not Sure.', sx + sw / 2, sy + (sh - 42) / 2, 34, sk ? '#4f5f65' : COL.grey, 600, sw - 20, 'center');
   p.hits.push({ x: sx, y: sy, w: sw, h: sh, id: 'skip', fn: skip });
-}).place(1.05, 1.3, -1.45);
+}).place(1.0, 1.3, -1.05);
 
 /* results (Figma: score gauge, "Excellent job!") */
 const result = new Panel(1.1, 1.1, (p) => {
@@ -320,6 +317,7 @@ function startTurn() {
   bubbleFr = t.fr; bubbleEn = t.en; talking = true;
   cupG.visible = mode === 'cafe' && turn === LINES.length - 1;
   bubble.mesh.visible = choices.mesh.visible = true;
+  hudPlace(); hud.mesh.visible = hudOn();
   renderAll();
   speak(t.fr, `audio/${ap()}_barista.mp3`, () => { talking = false; });
 }
@@ -784,32 +782,50 @@ const A = Object.assign({ en: false, big: false, slow: false, calm: false, seat:
 let paused = false, modal = null, a11yFrom = null;
 
 /* ---------- top-right buttons (Figma: pause + accessibility) ---------- */
-function iconPause(c, cx, cy, s, col) {
-  c.fillStyle = col;
-  c.beginPath(); c.roundRect(cx - s * .32, cy - s * .36, s * .24, s * .72, s * .07); c.fill();
-  c.beginPath(); c.roundRect(cx + s * .08, cy - s * .36, s * .24, s * .72, s * .07); c.fill();
+/* Figma icon style: soft mint fill, light cyan ring, grey-teal edge and a drop shadow */
+function iconLayer(c, path, hv, outer) {
+  c.save(); c.lineJoin = 'round'; c.lineCap = 'round';
+  c.shadowColor = 'rgba(0,0,0,.30)'; c.shadowBlur = 14; c.shadowOffsetY = 9;
+  path(); c.lineWidth = outer; c.strokeStyle = '#BCD5DA'; c.stroke();
+  c.restore();
+  c.lineJoin = 'round'; c.lineCap = 'round';
+  path(); c.lineWidth = outer - 8; c.strokeStyle = hv ? '#C4EEF2' : '#D9F1F4'; c.stroke();
+  path(); c.lineWidth = 8; c.fillStyle = hv ? '#FFFFFF' : '#F2FEFF'; c.strokeStyle = c.fillStyle; c.fill(); c.stroke();
 }
-function iconAccess(c, cx, cy, s, col) {
-  c.fillStyle = col; c.strokeStyle = col; c.lineCap = 'round'; c.lineJoin = 'round'; c.lineWidth = s * .12;
-  c.beginPath(); c.arc(cx, cy - s * .38, s * .12, 0, 7); c.fill();
-  c.beginPath(); c.moveTo(cx - s * .42, cy - s * .16); c.lineTo(cx, cy - s * .05); c.lineTo(cx + s * .42, cy - s * .16); c.stroke();
-  c.beginPath(); c.moveTo(cx, cy - s * .05); c.lineTo(cx, cy + s * .14); c.stroke();
-  c.beginPath(); c.moveTo(cx - s * .3, cy + s * .44); c.lineTo(cx, cy + s * .14); c.lineTo(cx + s * .3, cy + s * .44); c.stroke();
+function roundPoly(c, pts, r) {
+  const n = pts.length;
+  c.beginPath();
+  for (let i = 0; i < n; i++) {
+    const [px, py] = pts[(i + n - 1) % n], [x, y] = pts[i], [nx, ny] = pts[(i + 1) % n];
+    const a = [(px + x) / 2, (py + y) / 2], b = [(x + nx) / 2, (y + ny) / 2];
+    if (i === 0) c.moveTo(a[0], a[1]);
+    c.arcTo(x, y, b[0], b[1], r);
+  }
+  c.closePath();
+}
+function iconPause(c, cx, cy, k, hv) {
+  c.save(); c.translate(cx, cy); c.scale(k, k);
+  [-52, 52].forEach((x) => iconLayer(c, () => { c.beginPath(); c.roundRect(x - 12, -100, 24, 200, 12); }, hv, 24));
+  c.restore();
+}
+function iconAccess(c, cx, cy, k, hv) {
+  c.save(); c.translate(cx, cy); c.scale(k, k);
+  iconLayer(c, () => { c.beginPath(); c.arc(0, -108, 20, 0, 7); }, hv, 34);
+  iconLayer(c, () => roundPoly(c, [[-112, -54], [112, -54], [112, -32], [28, -2], [70, 108], [62, 134], [40, 134], [0, 58], [-40, 134], [-62, 134], [-70, 108], [-28, -2], [-112, -32]], 9), hv, 28);
+  c.restore();
 }
 const HUD_PAUSE = ['deskintro', 'desk', 'level', 'street', 'cafe', 'result'];
 const hudOn = () => HUD_PAUSE.includes(cur) || cur === 'dash';
-const hud = new Panel(.34, .14, (p) => {
-  const c = p.ctx, W = p.cv.width, H = p.cv.height, cy = H / 2, R = 150;
-  const draw = (cx, id, icon, fn) => {
-    const hv = p.hover === id;
-    c.beginPath(); c.arc(cx, cy, R, 0, 7); c.fillStyle = hv ? 'rgba(31,154,160,.95)' : 'rgba(18,30,36,.55)'; c.fill();
-    c.lineWidth = 7; c.strokeStyle = 'rgba(255,255,255,.85)'; c.stroke();
-    icon(c, cx, cy, R * 1.15, '#ffffff');
-    p.hits.push({ x: cx - R, y: cy - R, w: 2 * R, h: 2 * R, id, fn });
-  };
-  if (HUD_PAUSE.includes(cur)) draw(W * .3, 'pause', iconPause, () => (modal === 'pause' ? closeModal() : openModal('pause')));
-  draw(W * .74, 'access', iconAccess, () => (modal === 'a11y' ? closeModal() : openModal('a11y')));
-});
+const hud = new Panel(.17, .4, (p) => {
+  const W = p.cv.width, H = p.cv.height, havePause = HUD_PAUSE.includes(cur), kP = .9, kA = .92;
+  if (havePause) {
+    p.hits.push({ x: W / 2 - 120, y: H * .25 - 150, w: 240, h: 300, id: 'pause', fn: () => (modal === 'pause' ? closeModal() : openModal('pause')) });
+    iconPause(p.ctx, W / 2, H * .25, kP, p.hover === 'pause');
+  }
+  const ay = havePause ? H * .75 : H * .25;
+  p.hits.push({ x: W / 2 - 140, y: ay - 160, w: 280, h: 320, id: 'access', fn: () => (modal === 'a11y' ? closeModal() : openModal('a11y')) });
+  iconAccess(p.ctx, W / 2, ay, kA, p.hover === 'access');
+}, 340);
 hud.noScale = true;
 function frontOf(mesh, dist, dy = 0) {
   camera.updateWorldMatrix(true, false);
@@ -820,6 +836,14 @@ function frontOf(mesh, dist, dy = 0) {
   mesh.lookAt(o3.x, mesh.position.y, o3.z);
 }
 function hudPlace() {
+  if ((cur === 'cafe' || cur === 'desk') && choices.mesh.visible) { // dock on the right-hand edge of the reply panel
+    const m = choices.mesh, k = m.scale.x;
+    hud.mesh.quaternion.copy(m.quaternion);
+    hud.mesh.position.copy(m.position)
+      .addScaledVector(d3.set(1, 0, 0).applyQuaternion(m.quaternion), .75 * k + .12)
+      .addScaledVector(w3.set(0, 1, 0).applyQuaternion(m.quaternion), .65 * k - .2 - .02);
+    return;
+  }
   camera.updateWorldMatrix(true, false);
   camera.getWorldPosition(o3); camera.getWorldDirection(d3); d3.y = 0;
   if (d3.lengthSq() < 1e-4) d3.set(0, 0, -1);
