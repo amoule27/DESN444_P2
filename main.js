@@ -149,30 +149,42 @@ const bubble = new Panel(1.3, 0.62, (p) => {
 
 /* reply choices (Figma: "Use the microphone to reply…", speaker icons, mic, "Skip. Not sure.") */
 let order_ = [];
-let listening = false;
+let listening = false, sel = -1, voiceOff = false;
+const voiceOK = () => !!SR && !voiceOff;
 const choices = new Panel(1.5, 1.3, (p) => {
   const c = p.ctx, W = p.cv.width, H = p.cv.height;
   p.rr(4, 4, W - 8, H - 8, 40, 'rgba(244,251,252,.95)', COL.line);
-  p.text('Choose the reply you believe best fits.', 48, 40, 40, COL.teal, 700, W - 96);
+  p.text(voiceOK() ? 'Use the microphone to reply with the answer you believe best fits.' : 'Choose the reply you believe best fits. Point at it and pull the trigger.', 48, 34, 38, COL.teal, 700, W - 96);
   order_ = order;
   order.forEach((o, i) => {
-    const y = 150 + i * 148, hv = p.hover === 'o' + i, hl = reveal && o.ok;
-    p.rr(40, y, W - 80, 130, 22, hv ? COL.mint : '#fff', hl ? COL.ok : hv ? COL.teal : COL.line, hl ? 6 : 3);
+    const y = 150 + i * 148, hv = p.hover === 'o' + i, hl = reveal && o.ok, on = sel === i;
+    p.rr(40, y, W - 80, 130, 22, on || hv ? COL.mint : '#fff', hl ? COL.ok : on || hv ? COL.teal : COL.line, hl || on ? 6 : 3);
     speakerIcon(c, 70, y + 35, 60, p.hover === 's' + i ? COL.ok : COL.teal);
     if (A.en) { const e = p.text(o.fr, 160, y + 12, 30, COL.ink, 500, W - 240); p.text(o.en, 160, e + 2, 24, COL.grey, 400, W - 240); }
     else p.text(o.fr, 160, y + 20, 36, COL.ink, 500, W - 240);
     p.hits.push({ x: 56, y: y + 10, w: 96, h: 110, id: 's' + i, fn: () => speak(o.fr, o.audio) });
-    p.hits.push({ x: 40, y, w: W - 80, h: 130, id: 'o' + i, fn: () => pick(o) });
+    p.hits.push({ x: 40, y, w: W - 80, h: 130, id: 'o' + i, fn: () => selectRow(i) });
   });
   p.text(msg.t, 48, 600, 30, msg.c, 600, W - 96);
-  const mh = p.hover === 'mic', mc = listening ? COL.bad : COL.teal;
-  if (listening) { c.beginPath(); c.arc(100, H - 82, 60, 0, Math.PI * 2); c.strokeStyle = 'rgba(192,72,59,.35)'; c.lineWidth = 8; c.stroke(); }
-  c.beginPath(); c.arc(100, H - 82, 48, 0, Math.PI * 2); c.fillStyle = listening ? '#FBE3E0' : mh ? '#D4F5F7' : COL.mint; c.fill();
-  c.strokeStyle = listening ? COL.bad : mh ? COL.teal : COL.line; c.lineWidth = 4; c.stroke();
-  micIcon(c, 100, H - 82, 80, mc);
-  p.text(listening ? 'Listening… tap to stop' : 'Tap to speak', 176, H - 100, 30, listening ? COL.bad : COL.grey, 600, W - 620);
+  // microphone: grey and disabled until a reply is selected (Figma frame 17), teal when ready (frame 59)
+  const micOn = voiceOK() && sel >= 0 && !busy, mh = p.hover === 'mic' && micOn, mc = listening ? COL.bad : micOn ? '#4A9798' : '#A5A5A5';
+  if (listening) { c.beginPath(); c.arc(100, H - 82, 66, 0, Math.PI * 2); c.strokeStyle = 'rgba(192,72,59,.3)'; c.lineWidth = 8; c.stroke(); }
+  c.save(); c.shadowColor = 'rgba(0,0,0,.22)'; c.shadowBlur = 16; c.shadowOffsetY = 7;
+  c.beginPath(); c.arc(100, H - 82, 52, 0, Math.PI * 2);
+  const mg = c.createLinearGradient(100, H - 134, 100, H - 30); mg.addColorStop(0, '#F8FAFB'); mg.addColorStop(1, '#EEF1F4');
+  c.fillStyle = listening ? '#FBE3E0' : mh ? '#E6F8F8' : mg; c.fill(); c.restore();
+  c.beginPath(); c.arc(100, H - 82, 52, 0, Math.PI * 2); c.strokeStyle = listening ? COL.bad : micOn ? '#B9DADA' : '#A5A5A5'; c.lineWidth = 5; c.stroke();
+  micIcon(c, 100, H - 82, 86, mc);
+  const lab = !voiceOK() ? '' : listening ? 'Listening… tap to stop' : micOn ? 'Tap to speak' : 'Select a reply first';
+  p.text(lab, 176, H - 100, 30, listening ? COL.bad : micOn ? COL.teal : COL.grey, 600, W - 620);
   p.hits.push({ x: 50, y: H - 132, w: 100, h: 100, id: 'mic', fn: toggleMic });
-  p.btn(W - 400, H - 130, 360, 90, 'Skip. Not sure.', 'skip', skip);
+  // skip: soft iridescent fill, no stroke, grey text (Figma)
+  const sx = W - 400, sy = H - 130, sw = 360, sh = 90, sk = p.hover === 'skip';
+  const ig = c.createLinearGradient(sx, sy, sx + sw, sy + sh);
+  [[0, '#C9E4FF'], [.34, '#E1D2F8'], [.68, '#C8F0E0'], [1, '#FAE0CC']].forEach(([o, col]) => ig.addColorStop(o, col));
+  c.save(); c.globalAlpha = sk ? 1 : .92; p.rr(sx, sy, sw, sh, 24, ig); c.restore();
+  p.text('Skip. Not Sure.', sx + sw / 2, sy + (sh - 42) / 2, 34, sk ? '#4f5f65' : COL.grey, 600, sw - 20, 'center');
+  p.hits.push({ x: sx, y: sy, w: sw, h: sh, id: 'skip', fn: skip });
 }).place(1.05, 1.3, -1.45);
 
 /* results (Figma: score gauge, "Excellent job!") */
@@ -263,15 +275,17 @@ function micError(code) {
 }
 function heardIt(alts) {
   if (busy) return;
-  let best = null, bs = 0;
-  order.forEach((o) => alts.forEach((a) => { const sc = sim(a, o.fr); if (sc > bs) { bs = sc; best = o; } }));
-  if (best && bs >= .6) pick(best, alts[0]);
-  else wrong(`I heard “${alts[0]}”, which doesn’t match a reply. Tap a speaker icon to hear them, then try again.`);
+  const o = order[sel];
+  if (!o) return;
+  const sc = Math.max(...alts.map((x) => sim(x, o.fr)));
+  if (sc >= .6) pick(o, alts[0]);
+  else { msg = { t: `I heard “${alts[0]}”. Try saying: “${o.fr}”`, c: COL.bad }; choices.render(); }
 }
 function toggleMic() {
   if (busy || paused || modal) return;
+  if (!voiceOK()) return;
+  if (sel < 0) { msg = { t: 'Select a reply first, then tap the microphone.', c: COL.grey }; return choices.render(); }
   if (listening) { stopListening(); msg = { t: '', c: COL.grey }; return choices.render(); }
-  if (!SR) { msg = { t: 'Voice is not supported in this browser. Point and pull the trigger on a reply.', c: COL.bad }; return choices.render(); }
   if (talking) { msg = { t: 'Wait until the barista has finished, then tap the mic.', c: COL.grey }; return choices.render(); }
   try { synth && synth.cancel(); } catch (e) {}
   const r = new SR();
@@ -283,14 +297,14 @@ function toggleMic() {
     stopListening();
     if (alts.length) heardIt(alts);
   };
-  r.onerror = (e) => { if (srec !== r) return; got = true; stopListening(); msg = { t: micError(e.error), c: e.error === 'no-speech' ? COL.grey : COL.bad }; choices.render(); };
+  r.onerror = (e) => { if (srec !== r) return; got = true; stopListening(); if (e.error !== 'no-speech' && e.error !== 'aborted') voiceOff = true; msg = { t: micError(e.error), c: e.error === 'no-speech' ? COL.grey : COL.bad }; choices.render(); };
   r.onend = () => { if (srec !== r) return; stopListening(); if (!got) { msg = { t: micError('no-speech'), c: COL.grey }; choices.render(); } };
   try {
     r.start();
     listening = true;
     msg = { t: 'Listening… say your reply in French.', c: COL.teal };
     recTimer = setTimeout(() => { if (srec === r) { try { r.stop(); } catch (e) {} } }, 9000);
-  } catch (e) { srec = null; msg = { t: micError('other'), c: COL.bad }; }
+  } catch (e) { srec = null; voiceOff = true; msg = { t: micError('other'), c: COL.bad }; }
   choices.render();
 }
 
@@ -300,7 +314,7 @@ const renderAll = () => { bubble.render(); choices.render(); };
 
 function startTurn() {
   const t = LINES[turn];
-  stopListening();
+  stopListening(); sel = -1;
   tries = 0; reveal = false; showEn = false; busy = false; msg = { t: '', c: COL.grey };
   order = shuffle(t.options.map((o, i) => ({ ...o, audio: `audio/${ap()}_opt${i + 1}.mp3` })));
   bubbleFr = t.fr; bubbleEn = t.en; talking = true;
@@ -309,9 +323,18 @@ function startTurn() {
   renderAll();
   speak(t.fr, `audio/${ap()}_barista.mp3`, () => { talking = false; });
 }
+function selectRow(i) {
+  if (busy) return;
+  const o = order[i];
+  if (!voiceOK()) return pick(o);
+  stopListening();
+  sel = i;
+  msg = { t: 'Tap the microphone and say your reply in French.', c: COL.teal };
+  choices.render();
+}
 function pick(o, heard) {
   if (busy) return;
-  stopListening();
+  stopListening(); sel = -1;
   const t = LINES[turn];
   if (o.ok) {
     busy = true;
@@ -324,7 +347,7 @@ function pick(o, heard) {
 function wrong(text) {
   if (busy) return;
   const t = LINES[turn];
-  tries++; showEn = tries >= 2; talking = true;
+  tries++; showEn = tries >= 2; talking = true; sel = -1;
   bubbleFr = 'Pardon? Je n’ai pas compris.'; bubbleEn = 'Sorry? I didn’t understand.';
   msg = { t: text, c: COL.bad };
   renderAll();
@@ -332,7 +355,7 @@ function wrong(text) {
 }
 function skip() {
   if (busy) return;
-  stopListening();
+  stopListening(); sel = -1;
   busy = true; reveal = true; showEn = true;
   const ok = LINES[turn].options.find((o) => o.ok);
   msg = { t: `A good reply: “${ok.fr}” (${ok.en})`, c: COL.teal };
@@ -455,7 +478,8 @@ new GLTFLoader().load('assets/barista.glb', (g) => {
 
 /* ---------- app flow: loading → sign-in → dashboard → info desk → module ---------- */
 const loadScript = (a) => LINES.splice(0, LINES.length, ...a);
-let cur = 'load', dState = 'lang', pLearn = -1, pMod = -1, mode = 'cafe', dMsg = '', gT = null;
+let cur = 'load', dState = 'lang', pLearn = -1, pMod = -1, mode = 'cafe', dMsg = '';
+let gFocus = null, gSpin = true, selLoc = -1, markerT = 0;
 let card = { t: 'You are located in the Rosemont neighbourhood. Enter the café to your left.', b: 'Enter the café', fn: goCafe };
 let res = { head: '', body: '', btn: 'Play again', fn: playAgain };
 const ap = () => (mode === 'assess' ? 'a' : 't') + (turn + 1);
@@ -504,13 +528,106 @@ globe.rotation.x = .3; scene.add(globe);
 new THREE.TextureLoader().load('https://cdn.jsdelivr.net/gh/mrdoob/three.js@r160/examples/textures/planets/earth_atmos_2048.jpg', (t) => {
   t.colorSpace = THREE.SRGBColorSpace; globe.material.map = t; globe.material.color.set('#ffffff'); globe.material.needsUpdate = true;
 }, undefined, () => {});
-const LA = 45.5 * Math.PI / 180, LO = -73.6 * Math.PI / 180;
-const pin = new THREE.Mesh(new THREE.SphereGeometry(.035, 12, 8), new THREE.MeshBasicMaterial({ color: '#ff4b3e' }));
-pin.position.set(Math.cos(LA) * Math.cos(LO), Math.sin(LA), -Math.cos(LA) * Math.sin(LO)).multiplyScalar(1.01);
-pin.visible = false; globe.add(pin);
+/* popular French-speaking locations (photos optional: assets/loc_<id>.jpg) */
+const LOCS = [
+  { n: 'Nice', c: 'France', la: 43.70, lo: 7.26, id: 'nice' },
+  { n: 'Geneva', c: 'Switzerland', la: 46.20, lo: 6.14, id: 'geneva' },
+  { n: 'Montreal', c: 'Canada', la: 45.50, lo: -73.57, id: 'montreal', mod: true },
+  { n: 'Paris', c: 'France', la: 48.86, lo: 2.35, id: 'paris' },
+  { n: 'Québec City', c: 'Canada', la: 46.81, lo: -71.21, id: 'quebec' },
+  { n: 'Brussels', c: 'Belgium', la: 50.85, lo: 4.35, id: 'brussels' },
+  { n: 'Dakar', c: 'Senegal', la: 14.72, lo: -17.47, id: 'dakar' },
+];
+const llv = (la, lo) => { la *= Math.PI / 180; lo *= Math.PI / 180; return new THREE.Vector3(Math.cos(la) * Math.cos(lo), Math.sin(la), -Math.cos(la) * Math.sin(lo)); };
+LOCS.forEach((l) => { l.v = llv(l.la, l.lo); l.img = new Image(); l.img.onload = () => { l.ok = true; if (cur === 'dash' && dash.mesh.visible) dash.render(); }; l.img.src = `assets/loc_${l.id}.jpg`; });
+
+// marker (Figma: soft halo, ring and mint dot), fades and grows in when a location is chosen
+const mk = (g, col, op) => { const m = new THREE.Mesh(g, new THREE.MeshBasicMaterial({ color: col, transparent: true, opacity: 0, depthWrite: false, toneMapped: false })); m.userData.op = op; return m; };
+const marker = new THREE.Group(); marker.visible = false; globe.add(marker);
+const mHalo = mk(new THREE.CircleGeometry(.095, 48), '#e9f6f7', .42), mRing = mk(new THREE.RingGeometry(.072, .095, 48), '#f4fbfb', .9), mDot = mk(new THREE.CircleGeometry(.032, 32), '#b9e6e8', 1);
+mHalo.position.z = 0; mRing.position.z = .001; mDot.position.z = .002;
+marker.add(mHalo, mRing, mDot);
+const locDots = new THREE.Group(); locDots.visible = false; globe.add(locDots);
+LOCS.forEach((l) => { const d = new THREE.Mesh(new THREE.CircleGeometry(.022, 20), new THREE.MeshBasicMaterial({ color: '#1F9AA0', transparent: true, opacity: .85, toneMapped: false })); d.position.copy(l.v).multiplyScalar(1.003); d.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), l.v); locDots.add(d); });
+const gZ = new THREE.Vector3(0, 0, 1), gEye = new THREE.Vector3(0, 1.6, 0);
+function focusGlobe(v) {
+  const to = gEye.clone().sub(globe.position).normalize(), now = v.clone().applyQuaternion(globe.quaternion);
+  gFocus = new THREE.Quaternion().setFromUnitVectors(now, to).multiply(globe.quaternion);
+}
+function chooseLoc(i) {
+  const l = LOCS[i];
+  selLoc = i; markerT = 0; gSpin = false;
+  marker.position.copy(l.v).multiplyScalar(1.004); marker.quaternion.setFromUnitVectors(gZ, l.v);
+  focusGlobe(l.v);
+  dMsg = l.mod ? '' : `${l.n} is marked on the globe. Only Montréal has a module in this prototype.`;
+  dash.render();
+}
+function globeClick(point) {
+  const v = globe.worldToLocal(point.clone()).normalize();
+  let bi = -1, ba = .24;
+  LOCS.forEach((l, i) => { const a = v.angleTo(l.v); if (a < ba) { ba = a; bi = i; } });
+  if (bi >= 0 && (dState === 'loc' || dState === 'locall')) chooseLoc(bi);
+}
+// trackball: rotate the globe so the point under the pointer follows the pointer
+const gDir = (pt) => pt.clone().sub(globe.position).normalize();
+function globeDrag(drag, pt) {
+  if (!pt) { drag.last = null; return 0; }
+  const v = gDir(pt);
+  let ang = 0;
+  if (drag.last) { const q = new THREE.Quaternion().setFromUnitVectors(drag.last, v); ang = drag.last.angleTo(v); globe.quaternion.premultiply(q); gFocus = null; gSpin = false; }
+  drag.last = v;
+  return ang;
+}
 const grid = new THREE.GridHelper(40, 40, '#b8c2c9', '#cdd5da'); grid.visible = false; scene.add(grid);
 
-const FLAGS = [['German', ['#000', '#d00', '#fc0'], 1], ['French', ['#0055a4', '#fff', '#ef4135'], 0], ['Spanish', ['#c60b1e', '#ffc400', '#c60b1e'], 1], ['Italian', ['#009246', '#fff', '#ce2b37'], 0]];
+const FLAGS = [
+  ['German', 'h', ['#000000', '#dd0000', '#ffce00']], ['French', 'v', ['#0055a4', '#f1f1f1', '#ef4135']],
+  ['Spanish', 'h', ['#c60b1e', '#ffc400', '#c60b1e'], [1, 2, 1]], ['Italian', 'v', ['#009246', '#f1f1f1', '#ce2b37']],
+  ['Portuguese', 'v', ['#006600', '#ff0000'], [2, 3]], ['Japanese', 'jp'],
+];
+function drawFlag(c, f, x, y, w, h) {
+  c.save(); c.beginPath(); c.roundRect(x, y, w, h, 6); c.clip();
+  if (f[1] === 'jp') { c.fillStyle = '#f4f4f4'; c.fillRect(x, y, w, h); c.fillStyle = '#bc002d'; c.beginPath(); c.arc(x + w / 2, y + h / 2, h * .3, 0, 7); c.fill(); }
+  else {
+    const ws = f[3] || f[2].map(() => 1), tot = ws.reduce((a, b) => a + b, 0); let o = 0;
+    f[2].forEach((col, k) => { c.fillStyle = col; const l = ws[k] / tot; if (f[1] === 'h') c.fillRect(x, y + o * h, w, l * h + 1); else c.fillRect(x + o * w, y, l * w + 1, h); o += l; });
+  }
+  c.restore();
+}
+/* horizontal carousel with arrow buttons (Figma): items clip at the right edge, arrows below */
+const cs = {};
+function arrowBtn(p, x, y, dir, id, on, fn) {
+  const c = p.ctx, r = 42, hv = p.hover === id && on, cx = x + r, cy = y + r;
+  c.beginPath(); c.arc(cx, cy, r, 0, 7); c.fillStyle = hv ? '#DDF8F9' : '#F0FEFE'; c.fill(); c.strokeStyle = '#BFE6E6'; c.lineWidth = 3; c.stroke();
+  c.strokeStyle = on ? '#7f8d92' : '#c9d2d5'; c.lineWidth = 5; c.lineCap = 'round'; c.lineJoin = 'round';
+  const tip = cx + dir * 18, tail = cx - dir * 18, hb = tip - dir * 15;
+  c.beginPath(); c.moveTo(tail, cy); c.lineTo(tip, cy); c.moveTo(hb, cy - 14); c.lineTo(tip, cy); c.lineTo(hb, cy + 14); c.stroke();
+  p.hits.push({ x, y, w: r * 2, h: r * 2, id, fn: on ? fn : () => {} });
+}
+function carousel(p, key, x, y, w, h, n, iw, gap, drawItem, onPick) {
+  const c = p.ctx, st = cs[key] || (cs[key] = { cur: 0, tgt: 0 }), step = iw + gap, max = Math.max(0, n * step - gap + 80 - w);
+  st.tgt = Math.max(0, Math.min(max, st.tgt));
+  p.rr(x, y, w, h, 28, 'rgba(255,255,255,.5)', '#D3DFE2');
+  c.save(); c.beginPath(); c.roundRect(x, y, w, h, 28); c.clip();
+  for (let i = 0; i < n; i++) {
+    const ix = x + 40 + i * step - st.cur;
+    if (ix > x + w || ix + iw < x) continue;
+    drawItem(i, ix, y + 30);
+    const hx = Math.max(ix, x), hw = Math.min(ix + iw, x + w) - hx;
+    p.hits.push({ x: hx, y, w: hw, h, id: key + i, fn: () => onPick(i) });
+  }
+  c.restore();
+  const ay = y + h + 22;
+  arrowBtn(p, x, ay, -1, key + 'L', st.tgt > 1, () => { st.tgt -= step; p.render(); });
+  arrowBtn(p, x + 98, ay, 1, key + 'R', st.tgt < max - 1, () => { st.tgt += step; p.render(); });
+  return ay;
+}
+const nudge = (key, d) => { const st = cs[key]; if (st) { st.tgt += d; dash.render(); } };
+addEventListener('keydown', (e) => {
+  if (cur !== 'dash' || paused) return;
+  const key = dState === 'lang' ? 'f' : dState === 'loc' ? 'l' : null;
+  if (key && (e.key === 'ArrowRight' || e.key === 'ArrowLeft')) nudge(key, e.key === 'ArrowRight' ? 240 : -240);
+});
 const LEARN = ['How to address people', 'How to order with confidence', 'How to ask for directions'];
 const LEARN_SUB = ['Pronouns, adjectives, greetings.', 'Quantities, etiquette, modifiers.', 'Streets, landmarks, transit.'];
 const MODS = ['Explore a quiet neighbourhood in Montréal and practice ordering at a café.', 'Walk through old town Montréal and practice your skills at a sit-down diner.', 'Explore a local Montréal gift shop and practice asking for specific items.'];
@@ -534,34 +651,51 @@ const dash = new Panel(1.6, 1.45, (p) => {
   p.rr(560, 40, 420, 70, 35, '#fff', COL.line); p.text('Find a destination.', 600, 58, 32, '#9aa8ad');
   const back = (t) => {
     p.text('←', 44, 150, 44, COL.ink, 600); p.text(t, 110, 156, 34, COL.grey, 500, W - 160);
-    p.hits.push({ x: 30, y: 140, w: 80, h: 70, id: 'back', fn: () => gs(dState === 'mods' ? 'learn' : 'lang') });
+    p.hits.push({ x: 30, y: 140, w: 80, h: 70, id: 'back', fn: () => gs(dState === 'mods' ? 'learn' : dState === 'learn' ? 'loc' : dState === 'locall' ? 'loc' : 'lang') });
   };
+  const goOn = () => { if (selLoc < 0) { dMsg = 'Select a location to continue.'; dash.render(); } else if (!LOCS[selLoc].mod) { dMsg = 'Only Montréal has a module in this prototype.'; dash.render(); } else gs('learn'); };
   if (dState === 'lang') {
     p.text('Discover locations by language', 44, 160, 36, COL.ink, 700);
     p.text('Select a language to view destinations on the globe.', 44, 210, 30, COL.grey);
-    FLAGS.forEach(([n, cs, hz], i) => {
-      const x = 44 + i * 240, y = 290, hv = p.hover === 'f' + i;
-      p.rr(x, y, 220, 230, 20, hv ? COL.mint : '#fff', hv ? COL.teal : COL.line);
-      cs.forEach((col, k) => { c.fillStyle = col; if (hz) c.fillRect(x + 20, y + 24 + k * 40, 180, 40); else c.fillRect(x + 20 + k * 60, y + 24, 60, 120); });
-      c.strokeStyle = '#d5dcdf'; c.lineWidth = 2; c.strokeRect(x + 20, y + 24, 180, 120);
-      p.text(n, x + 110, y + 168, 34, COL.ink, 500, 200, 'center');
-      p.hits.push({ x, y, w: 220, h: 230, id: 'f' + i, fn: () => {
-        if (i !== 1) { dMsg = 'Only French is available in this prototype.'; return dash.render(); }
-        const ty = -Math.PI / 2 - LO;
-        globe.rotation.y = ty + ((globe.rotation.y - ty + Math.PI) % (2 * Math.PI) + 2 * Math.PI) % (2 * Math.PI) - Math.PI;
-        gT = { x: LA, y: ty }; pin.visible = true; gs('learn');
-      } });
-    });
+    const ay = carousel(p, 'f', 44, 270, W - 88, 330, FLAGS.length, 220, 20, (i, x, y) => {
+      const hv = p.hover === 'f' + i;
+      if (hv) p.rr(x - 8, y - 8, 236, 270, 20, COL.mint, COL.line);
+      drawFlag(c, FLAGS[i], x + 15, y + 30, 190, 128);
+      p.text(FLAGS[i][0], x + 110, y + 190, 34, COL.ink, 500, 210, 'center');
+    }, (i) => { if (i !== 1) { dMsg = 'Only French is available in this prototype.'; return dash.render(); } selLoc = -1; gs('loc'); });
+    p.text(dMsg, 44, ay + 110, 30, COL.bad, 600, W - 88);
+  } else if (dState === 'loc') {
+    back('Popular French speaking locations.');
+    const ay = carousel(p, 'l', 44, 235, W - 88, 410, LOCS.length, 226, 22, (i, x, y) => {
+      const l = LOCS[i], on = selLoc === i, hv = p.hover === 'l' + i;
+      c.save(); c.beginPath(); c.roundRect(x, y, 226, 226, 14); c.clip();
+      if (l.ok) { const im = l.img, k = Math.max(226 / im.width, 226 / im.height); c.drawImage(im, x + (226 - im.width * k) / 2, y + (226 - im.height * k) / 2, im.width * k, im.height * k); }
+      else { const g = c.createLinearGradient(x, y, x + 226, y + 226); g.addColorStop(0, '#d5ecee'); g.addColorStop(1, '#8fc7cc'); c.fillStyle = g; c.fillRect(x, y, 226, 226); p.text(l.n[0], x + 113, y + 60, 110, 'rgba(255,255,255,.85)', 700, 226, 'center'); }
+      if (hv && !on) { c.fillStyle = 'rgba(31,154,160,.12)'; c.fillRect(x, y, 226, 226); }
+      c.restore();
+      if (on) p.rr(x - 3, y - 3, 232, 232, 17, null, COL.teal, 6);
+      p.text(l.n, x + 113, y + 248, 34, COL.ink, 700, 226, 'center');
+      p.text(l.c, x + 113, y + 296, 30, COL.grey, 400, 226, 'center');
+    }, (i) => chooseLoc(i));
+    p.btn(W - 44 - 260, ay + 2, 260, 80, 'View All', 'all', () => gs('locall'));
+    p.btn(250, ay + 2, 330, 80, 'Continue', 'go', goOn);
+    p.text(dMsg, 44, ay + 110, 30, COL.bad, 600, W - 88);
+  } else if (dState === 'locall') {
+    back('All French speaking locations.');
+    list(p, LOCS.map((l) => `${l.n} · ${l.c}`), null, selLoc, 215, 68, (i) => chooseLoc(i));
+    p.btn(44, H - 118, 300, 80, 'Continue', 'go', goOn);
+    p.text(dMsg, 370, H - 108, 28, COL.bad, 600, W - 420);
   } else if (dState === 'learn') {
     back('What do you want to learn?');
     list(p, LEARN, LEARN_SUB, pLearn, 230, 120, (i) => { pLearn = i; dMsg = ''; dash.render(); });
     p.btn(44, H - 150, 300, 90, 'Continue', 'go', () => { if (pLearn < 0) { dMsg = 'Choose a topic to continue.'; dash.render(); } else gs('mods'); });
+    p.text(dMsg, 380, H - 130, 30, COL.bad, 600, W - 440);
   } else {
     back('Suggested modules according to your learning goals.');
     list(p, MODS, null, pMod, 230, 160, (i) => { if (i === 0) { pMod = 0; dMsg = ''; } else dMsg = 'Coming soon. This prototype has the café module only.'; dash.render(); }, (i) => i === 0);
     p.btn(44, H - 150, 300, 90, 'Continue', 'go', () => { if (pMod === 0) toDesk(); else { dMsg = 'Choose a module to continue.'; dash.render(); } });
+    p.text(dMsg, 380, H - 130, 30, COL.bad, 600, W - 440);
   }
-  p.text(dMsg, dState === 'lang' ? 44 : 380, dState === 'lang' ? 560 : H - 130, 30, COL.bad, 600, W - 440);
 }).place(-0.65, 1.35, -1.75);
 
 /* info desk (stylized stand-in for your lobby photo) */
@@ -743,7 +877,7 @@ function goHome() {
   epoch++; pend.length = 0; talking = false;
   try { synth && synth.cancel(); curAudio && curAudio.pause(); } catch (e) {}
   resetCup(); resetPay(); fadeT = null; fade.material.opacity = 0;
-  dState = 'lang'; gT = null; transition(() => setScene('dash'));
+  dState = 'lang'; gFocus = null; gSpin = true; selLoc = -1; transition(() => setScene('dash'));
 }
 function applyA() {
   panels.forEach((p) => { if (!p.noScale) p.mesh.scale.setScalar(A.big ? 1.25 : 1); });
@@ -828,6 +962,7 @@ const shown = (o) => { for (; o; o = o.parent) if (!o.visible) return false; ret
 const intersect = () => ray.intersectObjects(panels.filter((p) => shown(p.mesh)).map((p) => p.mesh), false)[0];
 const clickHit = (h) => { const p = h.object.userData.panel; if (modal && p !== hud && p !== pauseP && p !== a11yP) return; const b = p.at(h.uv); if (b) b.fn(); };
 
+let gCtl = null, mouseGlobe = null;
 const ctrls = [0, 1].map((i) => {
   const c = renderer.xr.getController(i);
   const line = new THREE.Line(new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(), new THREE.Vector3(0, 0, -1)]), new THREE.LineBasicMaterial({ color: 0x1F9AA0 }));
@@ -836,8 +971,10 @@ const ctrls = [0, 1].map((i) => {
   c.addEventListener('selectstart', () => {
     if (!paused && c.userData.cup) return grabCup(c);
     if (!paused && c.userData.term) return tapDone();
-    if (c.userData.hit) clickHit(c.userData.hit);
+    if (c.userData.hit) return clickHit(c.userData.hit);
+    if (c.userData.globe && !modal) { const pt = c.userData.globe.point; gCtl = { c, last: gDir(pt), start: pt.clone(), moved: 0 }; }
   });
+  c.addEventListener('selectend', () => { if (gCtl && gCtl.c === c) { if (gCtl.moved < .05) globeClick(gCtl.start); gCtl = null; } });
   rig.add(c);
   return c;
 });
@@ -853,14 +990,21 @@ const ctrls = [0, 1].map((i) => {
 const mouse = new THREE.Vector2(); let mouseOn = false, mouseHit = null, drag = null;
 addEventListener('pointermove', (e) => {
   mouse.set(e.clientX / innerWidth * 2 - 1, -(e.clientY / innerHeight) * 2 + 1); mouseOn = true;
-  if (drag && !renderer.xr.isPresenting) {
+  if (drag && drag.globe && !renderer.xr.isPresenting) {
+    drag.moved += Math.abs(e.clientX - drag.x) + Math.abs(e.clientY - drag.y); drag.x = e.clientX; drag.y = e.clientY;
+    ray.setFromCamera(mouse, camera);
+    if (drag.moved >= 6) globeDrag(drag, ray.intersectObject(globe, false)[0]?.point);
+  } else if (drag && !renderer.xr.isPresenting) {
     const dx = e.clientX - drag.x, dy = e.clientY - drag.y; drag.moved += Math.abs(dx) + Math.abs(dy);
     camera.rotation.y += dx * .004; camera.rotation.x = Math.max(-1, Math.min(1, camera.rotation.x + dy * .004));
     drag.x = e.clientX; drag.y = e.clientY;
   }
 });
-renderer.domElement.addEventListener('pointerdown', (e) => { drag = { x: e.clientX, y: e.clientY, moved: 0 }; });
-addEventListener('pointerup', () => { if (drag && drag.moved < 6 && !renderer.xr.isPresenting) { if (!paused && mouseCup) grabCup(null); else if (!paused && mouseTerm) tapDone(); else if (mouseHit) clickHit(mouseHit); } drag = null; });
+renderer.domElement.addEventListener('pointerdown', (e) => {
+  drag = { x: e.clientX, y: e.clientY, moved: 0, globe: !!(mouseGlobe && !mouseHit && !modal) };
+  if (drag.globe) drag.last = gDir(mouseGlobe.point);
+});
+addEventListener('pointerup', () => { if (drag && drag.moved < 6 && !renderer.xr.isPresenting) { if (!paused && mouseCup) grabCup(null); else if (!paused && mouseTerm) tapDone(); else if (mouseHit) clickHit(mouseHit); else if (drag.globe && mouseGlobe) globeClick(mouseGlobe.point); } drag = null; });
 
 /* ---------- main loop ---------- */
 const clock = new THREE.Clock();
@@ -879,17 +1023,19 @@ renderer.setAnimationLoop(() => {
     const h = renderer.xr.isPresenting ? intersect() : null;
     c.userData.hit = h; c.userData.line.scale.z = h ? h.distance : 2;
     c.userData.cup = cupLive && renderer.xr.isPresenting ? ray.intersectObject(cupGrab, false)[0] || null : null;
+    c.userData.globe = !h && cur === 'dash' && !paused && renderer.xr.isPresenting ? ray.intersectObject(globe, false)[0] || null : null;
     c.userData.term = payOn && !payDone && renderer.xr.isPresenting ? ray.intersectObject(room.terminal.hit, false)[0] || null : null;
     if (h) { const p = h.object.userData.panel, b = p.at(h.uv); want.set(p, b ? b.id : null); }
   }
-  mouseHit = null; mouseCup = null; mouseTerm = null;
+  mouseHit = null; mouseCup = null; mouseTerm = null; mouseGlobe = null;
   if (mouseOn && !renderer.xr.isPresenting) {
     ray.setFromCamera(mouse, camera);
     mouseHit = intersect() || null;
     if (cupLive) mouseCup = ray.intersectObject(cupGrab, false)[0] || null;
     if (payOn && !payDone) mouseTerm = ray.intersectObject(room.terminal.hit, false)[0] || null;
+    if (cur === 'dash' && !paused) mouseGlobe = ray.intersectObject(globe, false)[0] || null;
     if (mouseHit) { const p = mouseHit.object.userData.panel, b = p.at(mouseHit.uv); want.set(p, b ? b.id : null); }
-    renderer.domElement.style.cursor = (mouseHit && want.get(mouseHit.object.userData.panel)) || mouseCup || mouseTerm ? 'pointer' : 'default';
+    renderer.domElement.style.cursor = (mouseHit && want.get(mouseHit.object.userData.panel)) || mouseCup || mouseTerm ? 'pointer' : mouseGlobe && !mouseHit ? (drag && drag.globe ? 'grabbing' : 'grab') : 'default';
   }
   panels.forEach((p) => { if (p.mesh.visible) p.setHover(want.get(p) ?? null); });
 
@@ -914,9 +1060,27 @@ renderer.setAnimationLoop(() => {
   cupMat.emissive.set(cupLive && (mouseCup || ctrls.some((c) => c.userData.cup)) ? '#1F9AA0' : '#000000');
   rec.head.rotation.z = talkNow ? Math.sin(t * 7) * .05 : 0;
   rec.mouth.scale.y = talkNow ? 1 + Math.abs(Math.sin(t * 14)) * 5 : 1;
-  if (globe.visible) {
-    if (gT) { const k = Math.min(1, dt * 2.5); globe.rotation.y += (gT.y - globe.rotation.y) * k; globe.rotation.x += (gT.x - globe.rotation.x) * k; } else globe.rotation.y += dt * .08;
+  if (gCtl) {
+    const h = gCtl.c.userData.globe;
+    if (h) gCtl.moved += globeDrag(gCtl, h.point); else gCtl.last = null;
   }
+  if (globe.visible) {
+    if (gFocus) { globe.quaternion.slerp(gFocus, 1 - Math.exp(-dt * 4)); if (globe.quaternion.angleTo(gFocus) < .002) gFocus = null; }
+    else if (gSpin && !gCtl && !(drag && drag.globe)) globe.rotateY(dt * .08);
+  }
+  const dd = cur === 'dash';
+  marker.visible = dd && selLoc >= 0 && dState !== 'lang';
+  locDots.visible = dd && (dState === 'loc' || dState === 'locall');
+  if (marker.visible) {
+    markerT = Math.min(1, markerT + dt / .9);
+    const e = 1 - Math.pow(1 - markerT, 3);
+    marker.scale.setScalar(.6 + .4 * e);
+    [mHalo, mRing, mDot].forEach((m) => { m.material.opacity = m.userData.op * e; });
+    mHalo.scale.setScalar(1 + (markerT >= 1 ? Math.sin(t * 2.2) * .05 : 0));
+  }
+  let spun = false;
+  for (const k in cs) { const q = cs[k]; if (Math.abs(q.tgt - q.cur) > .5) { q.cur += (q.tgt - q.cur) * Math.min(1, dt * 10); spun = spun || dt > 0; } else q.cur = q.tgt; }
+  if (spun && dash.mesh.visible) dash.render();
   if (fadeT) {
     fadeT.t += dt;
     const a = fadeT.t < .4 ? fadeT.t / .4 : 1 - (fadeT.t - .4) / .4;
