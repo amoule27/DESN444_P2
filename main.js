@@ -647,8 +647,8 @@ const dash = new Panel(1.6, 1.45, (p) => {
   p.rr(4, 4, W - 8, H - 8, 40, 'rgba(240,245,247,.96)', COL.line);
   p.text('Welcome, Alex', 44, 34, 58, COL.ink, 700);
   p.rr(560, 40, 420, 70, 35, '#fff', COL.line); p.text('Find a destination.', 600, 58, 32, '#9aa8ad');
-  const back = (t) => {
-    p.text('←', 44, 150, 44, COL.ink, 600); p.text(t, 110, 156, 34, COL.grey, 500, W - 160);
+  const back = (t, mw = W - 160) => {
+    p.text('←', 44, 150, 44, COL.ink, 600); p.text(t, 110, 156, 34, COL.grey, 500, mw);
     p.hits.push({ x: 30, y: 140, w: 80, h: 70, id: 'back', fn: () => gs(dState === 'mods' ? 'learn' : dState === 'learn' ? 'loc' : dState === 'locall' ? 'loc' : 'lang') });
   };
   const goOn = () => { if (selLoc < 0) { dMsg = 'Select a location to continue.'; dash.render(); } else if (!LOCS[selLoc].mod) { dMsg = 'Only Montréal has a module in this prototype.'; dash.render(); } else gs('learn'); };
@@ -663,7 +663,8 @@ const dash = new Panel(1.6, 1.45, (p) => {
     }, (i) => { if (i !== 1) { dMsg = 'Only French is available in this prototype.'; return dash.render(); } selLoc = -1; gs('loc'); });
     p.text(dMsg, 44, ay + 110, 30, COL.bad, 600, W - 88);
   } else if (dState === 'loc') {
-    back('Popular French speaking locations.');
+    back('Popular French speaking locations.', W - 420);
+    p.btn(W - 44 - 220, 138, 220, 76, 'View All', 'all', () => gs('locall'));
     const ay = carousel(p, 'l', 44, 235, W - 88, 410, LOCS.length, 226, 22, (i, x, y) => {
       const l = LOCS[i], on = selLoc === i, hv = p.hover === 'l' + i;
       c.save(); c.beginPath(); c.roundRect(x, y, 226, 226, 14); c.clip();
@@ -675,14 +676,13 @@ const dash = new Panel(1.6, 1.45, (p) => {
       p.text(l.n, x + 113, y + 248, 34, COL.ink, 700, 226, 'center');
       p.text(l.c, x + 113, y + 296, 30, COL.grey, 400, 226, 'center');
     }, (i) => chooseLoc(i));
-    p.btn(W - 44 - 260, ay + 2, 260, 80, 'View All', 'all', () => gs('locall'));
-    p.btn(250, ay + 2, 330, 80, 'Continue', 'go', goOn);
+    p.btn(W - 44 - 290, ay + 2, 290, 80, 'Continue', 'go', goOn);
     p.text(dMsg, 44, ay + 110, 30, COL.bad, 600, W - 88);
   } else if (dState === 'locall') {
     back('All French speaking locations.');
-    list(p, LOCS.map((l) => `${l.n} · ${l.c}`), null, selLoc, 215, 68, (i) => chooseLoc(i));
-    p.btn(44, H - 118, 300, 80, 'Continue', 'go', goOn);
-    p.text(dMsg, 370, H - 108, 28, COL.bad, 600, W - 420);
+    list(p, LOCS.map((l) => `${l.n} · ${l.c}`), null, selLoc, 205, 62, (i) => chooseLoc(i));
+    p.btn(W - 44 - 290, H - 118, 290, 80, 'Continue', 'go', goOn);
+    p.text(dMsg, 44, H - 108, 28, COL.bad, 600, W - 420);
   } else if (dState === 'learn') {
     back('What do you want to learn?');
     list(p, LEARN, LEARN_SUB, pLearn, 230, 120, (i) => { pLearn = i; dMsg = ''; dash.render(); });
