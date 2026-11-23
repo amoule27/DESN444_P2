@@ -829,13 +829,13 @@ function iconAccess(c, cx, cy, k, hv) {
 const HUD_PAUSE = ['deskintro', 'desk', 'level', 'street', 'cafe', 'result'];
 const hudOn = () => HUD_PAUSE.includes(cur) || cur === 'dash';
 const hud = new Panel(.17, .4, (p) => {
-  const W = p.cv.width, H = p.cv.height, havePause = HUD_PAUSE.includes(cur), kP = .9, kA = .92;
+  const W = p.cv.width, H = p.cv.height, havePause = HUD_PAUSE.includes(cur) && !modal, kP = .9, kA = .92;
   if (havePause) {
     p.hits.push({ x: W / 2 - 120, y: H * .25 - 150, w: 240, h: 300, id: 'pause', fn: () => (modal === 'pause' ? closeModal() : openModal('pause')) });
     iconPause(p.ctx, W / 2, H * .25, kP, p.hover === 'pause');
   }
   const ay = havePause ? H * .75 : H * .25;
-  p.hits.push({ x: W / 2 - 140, y: ay - 160, w: 280, h: 320, id: 'access', fn: () => (modal === 'a11y' ? closeModal() : openModal('a11y')) });
+  p.hits.push({ x: W / 2 - 140, y: ay - 160, w: 280, h: 320, id: 'access', fn: () => (modal === 'a11y' ? a11yBack() : openModal('a11y', modal === 'pause' ? 'pause' : null)) });
   iconAccess(p.ctx, W / 2, ay, kA, p.hover === 'access');
 }, 340);
 hud.noScale = true;
@@ -864,44 +864,97 @@ function hudPlace() {
   hud.mesh.lookAt(o3.x, hud.mesh.position.y, o3.z);
 }
 
-/* ---------- pause menu + accessibility panel ---------- */
-const pauseP = new Panel(.9, .64, (p) => {
-  const W = p.cv.width;
-  p.rr(4, 4, W - 8, p.cv.height - 8, 44, 'rgba(255,255,255,.98)', COL.line);
-  p.text('Paused', W / 2, 44, 64, COL.teal, 700, W, 'center');
-  p.text('Nothing moves while you are paused. Take your time.', W / 2, 130, 30, COL.grey, 400, W - 140, 'center');
-  p.btn(80, 220, W - 160, 100, 'Resume', 'resume', closeModal);
-  p.btn(80, 345, W - 160, 100, 'Accessibility settings', 'acc', () => openModal('a11y', 'pause'));
-  p.btn(80, 470, W - 160, 100, 'Back to dashboard', 'home', goHome);
+/* ---------- pause + settings screens (Figma: pale full-view overlay, frosted globe, plain text) ---------- */
+const ovTex = (() => {
+  const cv = document.createElement('canvas'); cv.width = 256; cv.height = 512;
+  const c = cv.getContext('2d'), g = c.createLinearGradient(0, 0, 0, 512);
+  [[0, '#E3F0F2'], [.45, '#EDFAFB'], [.7, '#E6F4F5'], [1, '#D5DEE1']].forEach(([o, col]) => g.addColorStop(o, col));
+  c.fillStyle = g; c.fillRect(0, 0, 256, 512);
+  const t = new THREE.CanvasTexture(cv); t.colorSpace = THREE.SRGBColorSpace; return t;
+})();
+const ovDome = new THREE.Mesh(new THREE.SphereGeometry(6, 32, 16), new THREE.MeshBasicMaterial({ map: ovTex, side: THREE.BackSide, depthTest: false, depthWrite: false, toneMapped: false, fog: false }));
+ovDome.renderOrder = -100; ovDome.frustumCulled = false;
+const ovGlobe = new THREE.Mesh(new THREE.SphereGeometry(1, 64, 48), new THREE.MeshBasicMaterial({ color: '#ffffff', transparent: true, opacity: .55, depthTest: false, depthWrite: false, toneMapped: false }));
+ovGlobe.renderOrder = -90; ovGlobe.scale.setScalar(.4); ovGlobe.frustumCulled = false;
+const ov = new THREE.Group(); ov.add(ovDome, ovGlobe); ov.visible = false; scene.add(ov);
+const GREY = '#6f6f6f';
+function arrowL(c, x, y, w, col) {
+  c.strokeStyle = col; c.lineWidth = 3.5; c.lineCap = 'round'; c.lineJoin = 'round';
+  c.beginPath(); c.moveTo(x + w, y); c.lineTo(x, y); c.moveTo(x + 18, y - 17); c.lineTo(x, y); c.lineTo(x + 18, y + 17); c.stroke();
+}
+const pauseP = new Panel(.9, .7, (p) => {
+  const c = p.ctx, W = p.cv.width, H = p.cv.height, cy = H / 2;
+  arrowL(c, W / 2 - 88, cy - 135, 52, p.hover === 'exit' ? COL.teal : '#1a1a1a');
+  p.vtext('EXIT', W / 2 - 8, cy - 135, 44, p.hover === 'exit' ? COL.teal : GREY, 400, 300, 'left');
+  p.vtext('Paused', W / 2, cy, 92, COL.teal, 700, W, 'center');
+  p.vtext('RESUME', W / 2, cy + 135, 44, p.hover === 'resume' ? COL.teal : GREY, 400, 400, 'center');
+  p.hits.push({ x: W / 2 - 140, y: cy - 190, w: 280, h: 110, id: 'exit', fn: goHome });
+  p.hits.push({ x: W / 2 - 170, y: cy + 80, w: 340, h: 110, id: 'resume', fn: closeModal });
 });
+const playP = new Panel(.2, .2, (p) => {
+  const c = p.ctx, hv = p.hover === 'play';
+  c.lineJoin = 'round'; c.lineWidth = 9; c.strokeStyle = '#5D9FA3'; c.fillStyle = hv ? '#B4EDF1' : '#CDF5F7';
+  c.beginPath(); c.moveTo(78, 52); c.lineTo(78, 204); c.lineTo(210, 128); c.closePath(); c.fill(); c.stroke();
+  p.hits.push({ x: 40, y: 30, w: 190, h: 200, id: 'play', fn: closeModal });
+}, 256);
 const A_ROWS = [['en', 'English translations', 'Show English under every French line'], ['big', 'Larger panels', 'Make cards and menus bigger'], ['slow', 'Slower speech', 'The barista speaks more slowly'], ['seat', 'Seated mode', 'Raises your view if you are sitting'], ['calm', 'Reduce motion', 'No screen fades between scenes']];
-const a11yP = new Panel(1.0, .98, (p) => {
-  const c = p.ctx, W = p.cv.width, H = p.cv.height;
-  p.rr(4, 4, W - 8, H - 8, 44, 'rgba(255,255,255,.98)', COL.line);
-  p.text('Accessibility', W / 2, 36, 60, COL.teal, 700, W, 'center');
-  A_ROWS.forEach(([k, t, sub], i) => {
-    const y = 130 + i * 140, hv = p.hover === 'k' + k;
-    p.rr(40, y, W - 80, 120, 22, hv ? COL.mint : '#fff', hv ? COL.teal : COL.line);
-    p.text(t, 70, y + 18, 38, COL.ink, 600, W - 300);
-    p.text(sub, 70, y + 68, 26, COL.grey, 400, W - 300);
-    const on = A[k], sx = W - 190, sy = y + 30;
-    p.rr(sx, sy, 110, 60, 30, on ? COL.teal : '#c9d3d6');
-    c.beginPath(); c.arc(on ? sx + 80 : sx + 30, sy + 30, 24, 0, 7); c.fillStyle = '#fff'; c.fill();
-    p.hits.push({ x: 40, y, w: W - 80, h: 120, id: 'k' + k, fn: () => { A[k] = !A[k]; applyA(); } });
+const CATS = [['ACCESSIBILITY', 'Accessibility', ['seat', 'calm']], ['DISPLAY', 'Display', ['big']], ['LANGUAGE', 'Language', ['en']], ['DIFFICULTY', 'Difficulty', ['slow']]];
+let a11yCat = null;
+const a11yBack = () => { if (a11yCat !== null) { a11yCat = null; a11yP.render(); } else if (a11yFrom === 'pause') openModal('pause'); else closeModal(); };
+const a11yP = new Panel(.9, .9, (p) => {
+  const c = p.ctx, W = p.cv.width, cx = W / 2, cat = a11yCat === null ? null : CATS[a11yCat];
+  arrowL(c, cx - 26, 150, 52, p.hover === 'back' ? COL.teal : '#1a1a1a');
+  p.hits.push({ x: cx - 90, y: 95, w: 180, h: 110, id: 'back', fn: a11yBack });
+  p.vtext(cat ? cat[1] : 'Accessibility', cx, 330, 92, COL.teal, 700, W, 'center');
+  if (!cat) CATS.forEach(([label], i) => {
+    const y = 490 + i * 100;
+    p.vtext(label, cx, y, 44, p.hover === 'c' + i ? COL.teal : GREY, 400, W, 'center');
+    p.hits.push({ x: cx - 260, y: y - 45, w: 520, h: 90, id: 'c' + i, fn: () => { a11yCat = i; p.render(); } });
   });
-  p.btn(W / 2 - 200, H - 130, 400, 90, 'Done', 'done', () => (a11yFrom === 'pause' ? openModal('pause') : closeModal()));
+  else cat[2].forEach((k, i) => {
+    const row = A_ROWS.find((r) => r[0] === k), y = 480 + i * 200, on = A[k], hv = p.hover === 'k' + k;
+    p.vtext(row[1].toUpperCase(), cx, y, 44, hv ? COL.teal : GREY, 400, W - 120, 'center');
+    p.vtext(on ? 'ON' : 'OFF', cx, y + 62, 40, on ? COL.teal : '#9aa8ad', 700, W, 'center');
+    p.vtext(row[2], cx, y + 118, 28, '#8a979c', 400, W - 160, 'center');
+    p.hits.push({ x: 90, y: y - 50, w: W - 180, h: 190, id: 'k' + k, fn: () => { A[k] = !A[k]; applyA(); } });
+  });
 });
-pauseP.noScale = a11yP.noScale = true;
+pauseP.noScale = a11yP.noScale = playP.noScale = true;
+let modalHid = [];
+function ovPlace() {
+  camera.updateWorldMatrix(true, false); camera.getWorldPosition(o3); camera.getWorldDirection(d3); d3.y = 0;
+  if (d3.lengthSq() < 1e-4) d3.set(0, 0, -1);
+  d3.normalize();
+  const rx = -d3.z, rz = d3.x, hy = o3.y, hx = o3.x, hz = o3.z;
+  ov.position.set(hx, hy, hz);
+  ovGlobe.position.set(d3.x * 1.7 + rx * .5, 0, d3.z * 1.7 + rz * .5);
+  ovGlobe.quaternion.copy(globe.quaternion);
+  if (globe.material.map) ovGlobe.material.map = globe.material.map;
+  ovGlobe.material.needsUpdate = true;
+  [pauseP, a11yP].forEach((q) => { q.mesh.position.set(hx + d3.x * 1.5 - rx * .5, hy, hz + d3.z * 1.5 - rz * .5); q.mesh.lookAt(hx, hy, hz); q.mesh.scale.setScalar(A.big ? 1.45 : 1.25); });
+  const gx = hx + ovGlobe.position.x, gz = hz + ovGlobe.position.z, dx = hx - gx, dz = hz - gz, dl = Math.hypot(dx, dz);
+  playP.mesh.position.set(gx + dx / dl * .44, hy, gz + dz / dl * .44); playP.mesh.lookAt(hx, hy, hz);
+}
+function modalRestore() {
+  modalHid.forEach((o) => { o.visible = true; }); modalHid = [];
+  ov.visible = false; pauseP.mesh.visible = a11yP.mesh.visible = playP.mesh.visible = false;
+}
 function openModal(kind, from) {
   stopListening();
-  modal = kind; paused = true; a11yFrom = from || null;
-  try { synth && synth.pause(); curAudio && curAudio.pause(); } catch (e) {}
-  pauseP.mesh.visible = kind === 'pause'; a11yP.mesh.visible = kind === 'a11y';
-  const p = kind === 'pause' ? pauseP : a11yP;
-  frontOf(p.mesh, 1.0); p.render();
+  if (!modal) {
+    try { synth && synth.pause(); curAudio && curAudio.pause(); } catch (e) {}
+    const keep = new Set([ov, hud.mesh, pauseP.mesh, a11yP.mesh, playP.mesh, rig]);
+    modalHid = scene.children.filter((o) => o.visible && !keep.has(o));
+    modalHid.forEach((o) => { o.visible = false; });
+    ovPlace();
+  }
+  modal = kind; paused = true; a11yFrom = from || null; a11yCat = null;
+  ov.visible = true;
+  pauseP.mesh.visible = playP.mesh.visible = kind === 'pause'; a11yP.mesh.visible = kind === 'a11y';
+  hudPlace(); hud.render(); (kind === 'pause' ? pauseP : a11yP).render(); playP.render();
 }
 function closeModal() {
-  modal = null; paused = false; pauseP.mesh.visible = a11yP.mesh.visible = false;
+  modal = null; paused = false; modalRestore(); hudPlace(); hud.render();
   try {
     synth && synth.resume();
     if (curAudio && curAudio.paused && !curAudio.ended && curAudio.currentTime > 0) curAudio.play().catch(() => {});
@@ -909,7 +962,7 @@ function closeModal() {
   pend.splice(0).forEach((f) => f());
 }
 function goHome() {
-  modal = null; paused = false; pauseP.mesh.visible = a11yP.mesh.visible = false;
+  modal = null; paused = false; modalRestore(); hud.render();
   epoch++; pend.length = 0; talking = false;
   try { synth && synth.cancel(); curAudio && curAudio.pause(); } catch (e) {}
   resetCup(); resetPay(); fadeT = null; fade.material.opacity = 0;
@@ -996,7 +1049,7 @@ const ray = new THREE.Raycaster();
 const tmpM = new THREE.Matrix4(), o3 = new THREE.Vector3(), d3 = new THREE.Vector3();
 const shown = (o) => { for (; o; o = o.parent) if (!o.visible) return false; return true; };
 const intersect = () => ray.intersectObjects(panels.filter((p) => shown(p.mesh)).map((p) => p.mesh), false)[0];
-const clickHit = (h) => { const p = h.object.userData.panel; if (modal && p !== hud && p !== pauseP && p !== a11yP) return; const b = p.at(h.uv); if (b) b.fn(); };
+const clickHit = (h) => { const p = h.object.userData.panel; if (modal && p !== hud && p !== pauseP && p !== a11yP && p !== playP) return; const b = p.at(h.uv); if (b) b.fn(); };
 
 let gCtl = null, mouseGlobe = null;
 const ctrls = [0, 1].map((i) => {
