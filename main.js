@@ -117,6 +117,30 @@ class Panel {
     ls.forEach((l, i) => c.fillText(l, x, y + i * size * 1.25));
     return y + ls.length * size * 1.25;
   }
+  // text whose capital-letter top sits exactly on `top`; returns the bottom (last baseline + descender)
+  ttext(t, x, top, size, color, weight = 400, maxW = 1e4, align = 'left') {
+    const c = this.ctx; c.font = `${weight} ${size}px ${FONT}`; c.fillStyle = color; c.textAlign = align; c.textBaseline = 'alphabetic';
+    const capH = c.measureText('H').actualBoundingBoxAscent || size * .7, ls = wrap(c, t, maxW);
+    ls.forEach((l, i) => c.fillText(l, x, top + capH + i * size * 1.25));
+    return top + capH + (ls.length - 1) * size * 1.25 + size * .22;
+  }
+  tm(t, size, weight = 400, maxW = 1e4) { // height ttext would use
+    const c = this.ctx; c.font = `${weight} ${size}px ${FONT}`;
+    const capH = c.measureText('H').actualBoundingBoxAscent || size * .7;
+    return capH + (wrap(c, t, maxW).length - 1) * size * 1.25 + size * .22;
+  }
+  // resize the panel (canvas + mesh) to hPx so content can sit exactly 20px from the card edge
+  fit(hPx, anchor = 'center') {
+    hPx = Math.round(hPx);
+    if (hPx === this.cv.height) return;
+    const g = this.mesh.geometry.parameters.height, mid = this.mesh.position.y;
+    const ref = anchor === 'bottom' ? mid - g / 2 : mid;
+    this.cv.height = hPx;
+    const hm = hPx / this.cv.width * this.w;
+    this.mesh.geometry.dispose(); this.mesh.geometry = new THREE.PlaneGeometry(this.w, hm);
+    this.mesh.position.y = anchor === 'bottom' ? ref + hm / 2 : ref;
+    this.h = hm; this.tex.dispose();
+  }
   // text whose capital-letter height is centred on cy (even space above and below)
   vtext(t, x, cy, size, color, weight = 400, maxW = 1e4, align = 'left') {
     const c = this.ctx; c.font = `${weight} ${size}px ${FONT}`; c.fillStyle = color; c.textAlign = align; c.textBaseline = 'alphabetic';
@@ -142,20 +166,25 @@ let bubbleFr = '', bubbleEn = '', msg = { t: '', c: COL.grey };
 
 /* street card (Figma: "You are located in the Rosemont neighbourhood…") */
 const streetCard = new Panel(1.25, 0.62, (p) => {
-  const W = p.cv.width, H = p.cv.height;
+  const W = p.cv.width, PAD = 24, by = PAD + p.tm(card.t, 42, 700, W - 100) + 36;
+  p.fit(by + 100 + PAD); const H = p.cv.height;
   p.rr(4, 4, W - 8, H - 8, 36, 'rgba(244,251,252,.94)', COL.line);
-  p.text(card.t, 50, 44, 42, COL.teal, 700, W - 100);
-  p.btn(50, H - 150, 480, 100, card.b, 'enter', card.fn);
+  p.ttext(card.t, 50, PAD, 42, COL.teal, 700, W - 100);
+  p.btn(50, by, 480, 100, card.b, 'enter', card.fn);
 }).place(-0.55, 1.25, -1.5);
 
 /* barista speech bubble */
 const bubble = new Panel(1.3, 0.62, (p) => {
-  const c = p.ctx, W = p.cv.width, H = p.cv.height;
+  const W = p.cv.width, TOP = 30, showE = showEn || A.en;
+  const frB = TOP + p.tm(bubbleFr, 50, 700, W - 100), enB = showE ? frB + 6 + p.tm(bubbleEn, 36, 400, W - 100) : frB;
+  const bodyB = enB + 20; // 20px above the text and 20px below it, inside the bubble
+  p.fit(bodyB + 70, 'bottom');
+  const c = p.ctx;
   c.fillStyle = 'rgba(255,255,255,.96)'; c.strokeStyle = COL.line; c.lineWidth = 4;
-  c.beginPath(); c.roundRect(10, 10, W - 20, H - 80, 34); c.fill(); c.stroke();
-  c.beginPath(); c.moveTo(80, H - 72); c.lineTo(46, H - 6); c.lineTo(170, H - 72); c.fill();
-  const y = p.text(bubbleFr, 50, 44, 50, COL.ink, 700, W - 100);
-  if (showEn || A.en) p.text(bubbleEn, 50, y + 8, 36, COL.grey, 400, W - 100);
+  c.beginPath(); c.roundRect(10, 10, W - 20, bodyB - 10, 34); c.fill(); c.stroke();
+  c.beginPath(); c.moveTo(80, bodyB - 6); c.lineTo(46, bodyB + 62); c.lineTo(170, bodyB - 6); c.fill();
+  p.ttext(bubbleFr, 50, TOP, 50, COL.ink, 700, W - 100);
+  if (showE) p.ttext(bubbleEn, 50, frB + 6, 36, COL.grey, 400, W - 100);
 }).place(0.25, 2.1, -2.6);
 
 /* reply choices (Figma: "Use the microphone to reply…", speaker icons, mic, "Skip. Not sure.") */
@@ -163,9 +192,10 @@ let order_ = [];
 let listening = false, sel = -1, voiceOff = false;
 const voiceOK = () => !!SR && !voiceOff;
 const choices = new Panel(1.5, 1.3, (p) => {
-  const c = p.ctx, W = p.cv.width, H = p.cv.height;
+  const c = p.ctx, W = p.cv.width, PAD = 24, MR = 60, MY = 750;
+  p.fit(MY + MR + PAD); const H = p.cv.height;
   p.rr(4, 4, W - 8, H - 8, 40, 'rgba(244,251,252,.95)', COL.line);
-  p.text(voiceOK() ? 'Use the microphone to reply with the answer you believe best fits.' : 'Choose the reply you believe best fits. Point at it and pull the trigger.', 48, 34, 38, COL.teal, 700, W - 96);
+  p.ttext(voiceOK() ? 'Use the microphone to reply with the answer you believe best fits.' : 'Choose the reply you believe best fits. Point at it and pull the trigger.', 48, PAD, 38, COL.teal, 700, W - 96);
   order_ = order;
   order.forEach((o, i) => {
     const y = 150 + i * 148, hv = p.hover === 'o' + i, hl = reveal && o.ok, on = sel === i;
@@ -178,7 +208,7 @@ const choices = new Panel(1.5, 1.3, (p) => {
   });
   p.text(msg.t, 48, 600, 30, msg.c, 600, W - 96);
   // microphone: grey and disabled until a reply is selected (Figma frame 17), teal when ready (frame 59)
-  const MR = 60, MY = H - 90, micOn = voiceOK() && sel >= 0 && !busy, mh = p.hover === 'mic' && micOn, mc = listening ? COL.bad : micOn ? '#4A9798' : '#A5A5A5';
+  const micOn = voiceOK() && sel >= 0 && !busy, mh = p.hover === 'mic' && micOn, mc = listening ? COL.bad : micOn ? '#4A9798' : '#A5A5A5';
   if (listening) { c.beginPath(); c.arc(106, MY, MR + 14, 0, Math.PI * 2); c.strokeStyle = 'rgba(192,72,59,.3)'; c.lineWidth = 8; c.stroke(); }
   c.save(); c.shadowColor = 'rgba(0,0,0,.22)'; c.shadowBlur = 18; c.shadowOffsetY = 8;
   c.beginPath(); c.arc(106, MY, MR, 0, Math.PI * 2);
@@ -190,22 +220,24 @@ const choices = new Panel(1.5, 1.3, (p) => {
   p.text(lab, 190, MY - 18, 30, listening ? COL.bad : micOn ? COL.teal : COL.grey, 600, W - 640);
   p.hits.push({ x: 46, y: MY - MR, w: MR * 2, h: MR * 2, id: 'mic', fn: toggleMic });
   // skip: plain grey text, no fill or stroke
-  const sx = W - 400, sy = H - 130, sw = 360, sh = 90, sk = p.hover === 'skip';
+  const sx = W - 400, sy = MY - 45, sw = 360, sh = 90, sk = p.hover === 'skip';
   p.vtext('Skip. Not Sure.', sx + sw / 2, sy + sh / 2, 34, sk ? '#4f5f65' : COL.grey, 600, sw - 20, 'center');
   p.hits.push({ x: sx, y: sy, w: sw, h: sh, id: 'skip', fn: skip });
 }).place(1.0, 1.3, -1.05);
 
 /* results (Figma: score gauge, "Excellent job!") */
 const result = new Panel(1.1, 1.1, (p) => {
-  const c = p.ctx, W = p.cv.width, H = p.cv.height, cx = W / 2, cy = 330;
+  const W = p.cv.width, PAD = 24, cx = W / 2, cy = PAD + 20 + 200; // top of the gauge stroke sits 20px below the card edge
+  const bodyB = 444 + p.tm(res.body, 36, 400, W - 140), by = bodyB + 36;
+  p.fit(by + 100 + PAD); const c = p.ctx, H = p.cv.height;
   p.rr(4, 4, W - 8, H - 8, 44, 'rgba(255,255,255,.97)', COL.line);
   c.lineWidth = 40; c.lineCap = 'round';
   c.strokeStyle = '#DDF2F3'; c.beginPath(); c.arc(cx, cy, 200, Math.PI, 2 * Math.PI); c.stroke();
   c.strokeStyle = COL.teal; c.beginPath(); c.arc(cx, cy, 200, Math.PI, Math.PI + Math.PI * score / 10); c.stroke();
   p.text(score.toFixed(1), cx, cy - 70, 90, COL.grey, 600, 400, 'center');
-  p.text(res.head, cx, 430, 70, COL.teal, 700, W - 100, 'center');
-  p.text(res.body, cx, 530, 36, COL.ink, 400, W - 140, 'center');
-  p.btn(cx - 200, H - 190, 400, 100, res.btn, 'again', res.fn);
+  p.text(res.head, cx, 344, 70, COL.teal, 700, W - 100, 'center');
+  p.ttext(res.body, cx, 444, 36, COL.ink, 400, W - 140, 'center');
+  p.btn(cx - 200, by, 400, 100, res.btn, 'again', res.fn);
 }).place(0, 1.5, -1.4);
 
 /* ---------- speech: recorded audio first, browser voice as placeholder ---------- */
@@ -503,31 +535,36 @@ function logo(c, x, y, s, hole) {
   c.globalCompositeOperation = 'source-over';
 }
 const loading = new Panel(1.2, .8, (p) => {
-  const c = p.ctx, W = p.cv.width, H = p.cv.height;
+  const c = p.ctx, W = p.cv.width;
   if (cur === 'tip') {
+    const PAD = 24, t1 = 'Use your map to navigate the neighbourhood.', t2 = 'Look for the café on your route, then walk in.';
+    const b1 = PAD + p.tm(t1, 52, 600, W - 140), t2top = b1 + 40, b2 = t2top + p.tm(t2, 36, 400, W - 160), rowCy = b2 + 64;
+    p.fit(rowCy + 40 + PAD); const H = p.cv.height;
     p.rr(4, 4, W - 8, H - 8, 40, '#fff', COL.line);
-    p.text('Use your map to navigate the neighbourhood.', W / 2, 90, 52, COL.ink, 600, W - 140, 'center');
-    p.text('Look for the café on your route, then walk in.', W / 2, 300, 36, COL.grey, 400, W - 160, 'center');
-    logo(c, 140, H - 110, 40, '#fff'); p.text('Connecting you…', 210, H - 135, 40, COL.ink, 500);
-  } else { logo(c, W / 2, 230, 110); p.text('Connecting you…', W / 2, 400, 48, '#fff', 500, W, 'center'); }
+    p.ttext(t1, W / 2, PAD, 52, COL.ink, 600, W - 140, 'center');
+    p.ttext(t2, W / 2, t2top, 36, COL.grey, 400, W - 160, 'center');
+    logo(c, 140, rowCy, 40, '#fff'); p.vtext('Connecting you…', 210, rowCy, 40, COL.ink, 500);
+  } else {
+    const H = p.cv.height; logo(c, W / 2, 230, 110); p.text('Connecting you…', W / 2, 400, 48, '#fff', 500, W, 'center'); }
 }).place(0, 1.5, -1.6);
 
 const sign = new Panel(1.1, .85, (p) => {
-  const c = p.ctx, W = p.cv.width;
-  p.rr(4, 4, W - 8, p.cv.height - 8, 44, '#fff', COL.line);
-  p.text('Sign in', W / 2, 40, 64, '#111', 700, W, 'center');
+  const c = p.ctx, W = p.cv.width, PAD = 24, last = 'You’re all set. You will be connected in a moment.';
+  p.fit(cur === 'signin' ? 590 + PAD : 330 + p.tm(last, 36, 400, W - 160) + PAD); const H = p.cv.height;
+  p.rr(4, 4, W - 8, H - 8, 44, '#fff', COL.line);
+  p.ttext('Sign in', W / 2, PAD, 64, '#111', 700, W, 'center');
   if (cur === 'signin') {
-    [['Take off your headset and go to worldspeak.auth0.com/authenticate', 150], ['Enter this one-time login code on your external device.', 340]].forEach(([t, y], i) => {
+    [['Take off your headset and go to worldspeak.auth0.com/authenticate', 130], ['Enter this one-time login code on your external device.', 320]].forEach(([t, y], i) => {
       c.beginPath(); c.arc(80, y + 24, 30, 0, 7); c.fillStyle = COL.ok; c.fill();
       p.text(String(i + 1), 80, y + 4, 36, '#fff', 700, 60, 'center');
       p.text(t, 140, y, 34, COL.grey, 400, W - 190);
     });
-    p.rr(60, 500, W - 120, 110, 16, '#fff', '#c9d2d6'); p.text(code, W / 2, 530, 48, COL.ink, 700, W, 'center');
+    p.rr(60, 480, W - 120, 110, 16, '#fff', '#c9d2d6'); p.text(code, W / 2, 510, 48, COL.ink, 700, W, 'center');
   } else {
-    c.beginPath(); c.arc(W / 2, 250, 56, 0, 7); c.fillStyle = COL.ok; c.fill();
-    p.text('✓', W / 2, 205, 80, '#fff', 700, 100, 'center');
-    p.text('Hello, Alex!', W / 2, 350, 64, COL.grey, 700, W, 'center');
-    p.text('You’re all set. You will be connected in a moment.', W / 2, 450, 36, COL.grey, 400, W - 160, 'center');
+    c.beginPath(); c.arc(W / 2, 170, 56, 0, 7); c.fillStyle = COL.ok; c.fill();
+    p.text('✓', W / 2, 125, 80, '#fff', 700, 100, 'center');
+    p.text('Hello, Alex!', W / 2, 240, 64, COL.grey, 700, W, 'center');
+    p.ttext(last, W / 2, 330, 36, COL.grey, 400, W - 160, 'center');
   }
 }).place(0, 1.5, -1.5);
 
@@ -653,10 +690,12 @@ function list(p, items, subs, sel, y0, h, pickFn, enabled = () => true) {
   });
 }
 const dash = new Panel(1.6, 1.45, (p) => {
-  const c = p.ctx, W = p.cv.width, H = p.cv.height;
+  const c = p.ctx, W = p.cv.width, PAD = 24;
+  const bottom = { lang: dMsg ? 772 : 706, loc: dMsg ? 817 : 749, locall: 837, learn: 835 }[dState];
+  p.fit(bottom + PAD); const H = p.cv.height;
   p.rr(4, 4, W - 8, H - 8, 40, 'rgba(240,245,247,.96)', COL.line);
-  p.text('Welcome, Alex', 44, 34, 58, COL.ink, 700);
-  p.rr(560, 40, 420, 70, 35, '#fff', COL.line); p.vtext('Find a destination.', 600, 75, 32, '#9aa8ad');
+  p.vtext('Welcome, Alex', 44, PAD + 35, 58, COL.ink, 700);
+  p.rr(560, PAD, 420, 70, 35, '#fff', COL.line); p.vtext('Find a destination.', 600, PAD + 35, 32, '#9aa8ad');
   const back = (t, mw = W - 160) => {
     p.text('←', 44, 150, 44, COL.ink, 600); p.text(t, 110, 156, 34, COL.grey, 500, mw);
     p.hits.push({ x: 30, y: 140, w: 80, h: 70, id: 'back', fn: () => gs(dState === 'learn' ? 'loc' : dState === 'locall' ? 'loc' : 'lang') });
@@ -692,8 +731,8 @@ const dash = new Panel(1.6, 1.45, (p) => {
     back('All French speaking locations.', W - 420);
     p.ghost(W - 44 - 220, 138, 220, 76, 'View Less', 'less', () => gs('loc'));
     list(p, LOCS.map((l) => `${l.n} · ${l.c}`), null, selLoc, 205, 62, (i) => chooseLoc(i));
-    p.btn(W - 44 - 290, H - 118, 290, 80, 'Continue', 'go', goOn);
-    p.text(dMsg, 44, H - 108, 28, COL.bad, 600, W - 420);
+    p.btn(W - 44 - 290, 757, 290, 80, 'Continue', 'go', goOn);
+    p.text(dMsg, 44, 767, 28, COL.bad, 600, W - 420);
   } else {
     back('What do you want to learn?');
     list(p, LEARN, LEARN_SUB, pLearn, 215, 116, (i) => { pLearn = i; dMsg = ''; dash.render(); });
@@ -772,9 +811,10 @@ const coffee = new THREE.Mesh(new THREE.CylinderGeometry(.033, .033, .004, 20), 
 const cupGrab = new THREE.Mesh(new THREE.SphereGeometry(.14, 8, 6), new THREE.MeshBasicMaterial({ visible: false })); cupGrab.position.y = .05; cupG.add(cupGrab);
 room.steam(cupG, 0, .085, 0, 1);
 const cupHint = new Panel(1.1, .34, (p) => {
-  const W = p.cv.width, H = p.cv.height;
+  const W = p.cv.width, PAD = 24;
+  p.fit(PAD + p.tm(cupMsg, 46, 700, W - 80) + PAD); const H = p.cv.height;
   p.rr(4, 4, W - 8, H - 8, 30, 'rgba(244,251,252,.95)', COL.line);
-  p.text(cupMsg, W / 2, 30, 46, COL.teal, 700, W - 80, 'center');
+  p.ttext(cupMsg, W / 2, PAD, 46, COL.teal, 700, W - 80, 'center');
 }).place(.55, 1.6, -1.9);
 function resetCup() {
   cupLive = false; cupHeld = null; cupG.visible = false; saucer.visible = true;
@@ -852,7 +892,7 @@ function hudPlace() {
     hud.mesh.quaternion.copy(m.quaternion);
     hud.mesh.position.copy(m.position)
       .addScaledVector(d3.set(1, 0, 0).applyQuaternion(m.quaternion), .75 * k + .12)
-      .addScaledVector(w3.set(0, 1, 0).applyQuaternion(m.quaternion), .65 * k - .2 - .02);
+      .addScaledVector(w3.set(0, 1, 0).applyQuaternion(m.quaternion), m.geometry.parameters.height / 2 * k - .2 - .02);
     return;
   }
   camera.updateWorldMatrix(true, false);
@@ -981,11 +1021,13 @@ const v3 = new THREE.Vector3(), w3 = new THREE.Vector3();
 let payOn = false, payDone = true, payHolder = null, payNear = 0, mouseTerm = null, actx = null;
 const card3d = room.makeCard();
 const payHint = new Panel(.8, .3, (p) => {
-  const W = p.cv.width, H = p.cv.height;
+  const W = p.cv.width, PAD = 24, t1 = 'Tap your card on the terminal to pay.', t2 = 'You can also point at the terminal and pull the trigger.';
+  const b1 = PAD + p.tm(t1, 40, 700, W - 80), t2top = b1 + 12, b2 = t2top + p.tm(t2, 28, 400, W - 80), by = b2 + 24;
+  p.fit(by + 76 + PAD); const H = p.cv.height;
   p.rr(4, 4, W - 8, H - 8, 34, 'rgba(244,251,252,.96)', COL.line);
-  p.text('Tap your card on the terminal to pay.', 40, 28, 40, COL.teal, 700, W - 80);
-  p.text('You can also point at the terminal and pull the trigger.', 40, 96, 28, COL.grey, 400, W - 80);
-  p.btn(W - 280, H - 100, 240, 76, 'Skip', 'skiptap', tapDone);
+  p.ttext(t1, 40, PAD, 40, COL.teal, 700, W - 80);
+  p.ttext(t2, 40, t2top, 28, COL.grey, 400, W - 80);
+  p.btn(W - 280, by, 240, 76, 'Skip', 'skiptap', tapDone);
 });
 function beep() {
   try {
