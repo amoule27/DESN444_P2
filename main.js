@@ -5,6 +5,7 @@ import { XRControllerModelFactory } from 'three/addons/webxr/XRControllerModelFa
 import { XRHandModelFactory } from 'three/addons/webxr/XRHandModelFactory.js';
 import { LINES, CAFE, ASSESS } from './dialogue.js';
 import { buildCafe } from './cafe3d.js';
+import { buildAirport } from './airport3d.js';
 
 /* ---------- design tokens (from the Figma mid-fidelity file) ---------- */
 const COL = { teal: '#1F9AA0', ink: '#2C4A52', mint: '#EAFBFC', line: '#BFEDEF', grey: '#6B7C82', ok: '#0B9A6D', bad: '#C0483B' };
@@ -746,28 +747,9 @@ const dash = new Panel(1.6, 1.45, (p) => {
   }
 }).place(-0.65, 1.35, -1.75);
 
-/* info desk (stylized stand-in for your lobby photo) */
+/* info desk: low-poly airport arrivals hall (built in airport3d.js) */
 const desk = new THREE.Group(); scene.add(desk);
-box(desk, 10, .1, 10, '#c9ced2', 0, -.05, -3);
-box(desk, 10, 4, .1, '#20242a', 0, 2, -5.5);
-box(desk, .1, 4, 10, '#2c3138', -5, 2, -3);
-box(desk, 4.6, 1.05, .8, '#f4f5f6', 0, .52, -2.4);
-box(desk, 4.8, .06, .95, '#e1e4e7', 0, 1.06, -2.4);
-canvasPlane(1.8, .7, 512, (c, w, h) => {
-  c.fillStyle = '#1b2430'; c.fillRect(0, 0, w, h); c.fillStyle = '#fff'; c.font = `600 ${h * .2}px ${FONT}`;
-  c.textAlign = 'center'; c.textBaseline = 'middle'; c.fillText('Information', w / 2, h / 2);
-}, desk, .9, 2.3, -5.4);
-function makePerson(parent, x, z, shirt, hairCol) {
-  const g = new THREE.Group(); g.position.set(x, 0, z); parent.add(g);
-  const torso = new THREE.Mesh(new THREE.CylinderGeometry(.2, .25, .7, 16), M(shirt)); torso.position.y = 1.05; g.add(torso);
-  const head = new THREE.Group(); head.position.y = 1.54; g.add(head);
-  head.add(new THREE.Mesh(new THREE.SphereGeometry(.14, 20, 16), M('#e2b48f')));
-  const hair = new THREE.Mesh(new THREE.SphereGeometry(.15, 20, 16, 0, Math.PI * 2, 0, Math.PI * .55), M(hairCol)); hair.position.y = .02; head.add(hair);
-  const mouth = new THREE.Mesh(new THREE.BoxGeometry(.06, .012, .01), M('#7a2f2f')); mouth.position.set(0, -.05, .135); head.add(mouth);
-  [-1, 1].forEach((s) => { const a = new THREE.Mesh(new THREE.CylinderGeometry(.045, .045, .55, 10), M(shirt)); a.position.set(s * .27, 1.1, .05); a.rotation.z = s * .12; g.add(a); });
-  return { g, head, mouth };
-}
-const rec = makePerson(desk, -.5, -3.1, '#1d1d22', '#b8531f');
+const rec = buildAirport({ parent: desk, FONT }).rec;
 
 /* flow */
 function boot() {
