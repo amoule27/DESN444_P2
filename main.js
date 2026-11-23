@@ -124,10 +124,10 @@ class Panel {
     const top = cy - ((ls.length - 1) * lh + capH) / 2 + capH;
     ls.forEach((l, i) => c.fillText(l, x, top + i * lh));
   }
-  btn(x, y, w, h, label, id, fn) {
+  btn(x, y, w, h, label, id, fn, o = {}) {
     const hv = this.hover === id;
     this.rr(x, y, w, h, 18, hv ? '#D4F5F7' : COL.mint, hv ? COL.teal : COL.line);
-    this.vtext(label, x + w / 2, y + h / 2, 34, COL.ink, 600, w - 20, 'center');
+    this.vtext(label, x + w / 2, y + h / 2, 34, o.color || COL.ink, o.weight || 600, w - 20, 'center');
     this.hits.push({ x, y, w, h, id, fn });
   }
   ghost(x, y, w, h, label, id, fn) { // text-only button: no fill, no stroke
@@ -487,7 +487,7 @@ new GLTFLoader().load('assets/barista.glb', (g) => {
 
 /* ---------- app flow: loading → sign-in → dashboard → info desk → module ---------- */
 const loadScript = (a) => LINES.splice(0, LINES.length, ...a);
-let cur = 'load', dState = 'lang', pLearn = -1, pMod = -1, mode = 'cafe', dMsg = '';
+let cur = 'load', dState = 'lang', pLearn = -1, mode = 'cafe', dMsg = '';
 let gFocus = null, gSpin = true, selLoc = -1, markerT = 0;
 let card = { t: 'You are located in the Rosemont neighbourhood. Enter the café to your left.', b: 'Enter the café', fn: goCafe };
 let res = { head: '', body: '', btn: 'Play again', fn: playAgain };
@@ -637,17 +637,16 @@ addEventListener('keydown', (e) => {
   const key = dState === 'lang' ? 'f' : dState === 'loc' ? 'l' : null;
   if (key && (e.key === 'ArrowRight' || e.key === 'ArrowLeft')) nudge(key, e.key === 'ArrowRight' ? 240 : -240);
 });
-const LEARN = ['How to address people', 'How to order with confidence', 'How to ask for directions'];
-const LEARN_SUB = ['Pronouns, adjectives, greetings.', 'Quantities, etiquette, modifiers.', 'Streets, landmarks, transit.'];
-const MODS = ['Explore a quiet neighbourhood in Montréal and practice ordering at a café.', 'Walk through old town Montréal and practice your skills at a sit-down diner.', 'Explore a local Montréal gift shop and practice asking for specific items.'];
+const LEARN = ['How to address people.', 'How to order with confidence.', 'Describe yourself.', 'Ask for directions.'];
+const LEARN_SUB = ['Ask for directions from multiple locals.', 'Practice ordering at a cafe.', 'Introduce yourself to a group of locals.', 'Navigate downtown Montreal and ask for specific locations.'];
 const gs = (s) => { dState = s; dMsg = ''; dash.render(); };
 function list(p, items, subs, sel, y0, h, pickFn, enabled = () => true) {
   const c = p.ctx, W = p.cv.width;
   items.forEach((t, i) => {
     const y = y0 + i * (h + 16), hv = p.hover === 'r' + i, ok = enabled(i);
     p.rr(44, y, W - 88, h, 20, hv && ok ? COL.mint : '#fff', sel === i ? COL.teal : COL.line, sel === i ? 6 : 3);
-    p.text(t, 76, y + (subs ? 16 : 22), 36, ok ? COL.ink : '#9aa8ad', 500, W - 220);
-    if (subs) p.text(subs[i], 76, y + 66, 30, COL.grey);
+    if (subs) { p.text(t, 76, y + 20, 32, ok ? COL.ink : '#9aa8ad', 400, W - 200); p.text(subs[i], 76, y + 64, 27, COL.grey, 400, W - 190); }
+    else p.text(t, 76, y + 22, 36, ok ? COL.ink : '#9aa8ad', 500, W - 220);
     c.beginPath(); c.arc(W - 100, y + h / 2, 22, 0, 7); c.strokeStyle = COL.line; c.lineWidth = 4; c.stroke();
     if (sel === i) { c.beginPath(); c.arc(W - 100, y + h / 2, 12, 0, 7); c.fillStyle = COL.teal; c.fill(); }
     p.hits.push({ x: 44, y, w: W - 88, h, id: 'r' + i, fn: () => pickFn(i) });
@@ -660,7 +659,7 @@ const dash = new Panel(1.6, 1.45, (p) => {
   p.rr(560, 40, 420, 70, 35, '#fff', COL.line); p.vtext('Find a destination.', 600, 75, 32, '#9aa8ad');
   const back = (t, mw = W - 160) => {
     p.text('←', 44, 150, 44, COL.ink, 600); p.text(t, 110, 156, 34, COL.grey, 500, mw);
-    p.hits.push({ x: 30, y: 140, w: 80, h: 70, id: 'back', fn: () => gs(dState === 'mods' ? 'learn' : dState === 'learn' ? 'loc' : dState === 'locall' ? 'loc' : 'lang') });
+    p.hits.push({ x: 30, y: 140, w: 80, h: 70, id: 'back', fn: () => gs(dState === 'learn' ? 'loc' : dState === 'locall' ? 'loc' : 'lang') });
   };
   const goOn = () => { if (selLoc < 0) { dMsg = 'Select a location to continue.'; dash.render(); } else if (!LOCS[selLoc].mod) { dMsg = 'Only Montréal has a module in this prototype.'; dash.render(); } else gs('learn'); };
   if (dState === 'lang') {
@@ -695,16 +694,16 @@ const dash = new Panel(1.6, 1.45, (p) => {
     list(p, LOCS.map((l) => `${l.n} · ${l.c}`), null, selLoc, 205, 62, (i) => chooseLoc(i));
     p.btn(W - 44 - 290, H - 118, 290, 80, 'Continue', 'go', goOn);
     p.text(dMsg, 44, H - 108, 28, COL.bad, 600, W - 420);
-  } else if (dState === 'learn') {
-    back('What do you want to learn?');
-    list(p, LEARN, LEARN_SUB, pLearn, 230, 120, (i) => { pLearn = i; dMsg = ''; dash.render(); });
-    p.btn(44, H - 150, 300, 90, 'Continue', 'go', () => { if (pLearn < 0) { dMsg = 'Choose a topic to continue.'; dash.render(); } else gs('mods'); });
-    p.text(dMsg, 380, H - 130, 30, COL.bad, 600, W - 440);
   } else {
-    back('Suggested modules according to your learning goals.');
-    list(p, MODS, null, pMod, 230, 160, (i) => { if (i === 0) { pMod = 0; dMsg = ''; } else dMsg = 'Coming soon. This prototype has the café module only.'; dash.render(); }, (i) => i === 0);
-    p.btn(44, H - 150, 300, 90, 'Continue', 'go', () => { if (pMod === 0) toDesk(); else { dMsg = 'Choose a module to continue.'; dash.render(); } });
-    p.text(dMsg, 380, H - 130, 30, COL.bad, 600, W - 440);
+    back('What do you want to learn?');
+    list(p, LEARN, LEARN_SUB, pLearn, 215, 116, (i) => { pLearn = i; dMsg = ''; dash.render(); });
+    const by = 215 + LEARN.length * 132 + 22;
+    p.btn(W - 44 - 200, by, 200, 70, 'Continue', 'go', () => {
+      if (pLearn < 0) { dMsg = 'Choose a topic to continue.'; dash.render(); }
+      else if (pLearn === 1) toDesk();
+      else { dMsg = 'Coming soon. This prototype has the café ordering module only.'; dash.render(); }
+    }, { weight: 400, color: '#5f6f75' });
+    p.text(dMsg, 44, by + 4, 30, COL.bad, 600, W - 340);
   }
 }).place(-0.65, 1.35, -1.75);
 
