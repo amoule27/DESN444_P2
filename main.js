@@ -117,10 +117,21 @@ class Panel {
     ls.forEach((l, i) => c.fillText(l, x, y + i * size * 1.25));
     return y + ls.length * size * 1.25;
   }
+  // text whose capital-letter height is centred on cy (even space above and below)
+  vtext(t, x, cy, size, color, weight = 400, maxW = 1e4, align = 'left') {
+    const c = this.ctx; c.font = `${weight} ${size}px ${FONT}`; c.fillStyle = color; c.textAlign = align; c.textBaseline = 'alphabetic';
+    const capH = c.measureText('H').actualBoundingBoxAscent || size * .7, lh = size * 1.25, ls = wrap(c, t, maxW);
+    const top = cy - ((ls.length - 1) * lh + capH) / 2 + capH;
+    ls.forEach((l, i) => c.fillText(l, x, top + i * lh));
+  }
   btn(x, y, w, h, label, id, fn) {
     const hv = this.hover === id;
     this.rr(x, y, w, h, 18, hv ? '#D4F5F7' : COL.mint, hv ? COL.teal : COL.line);
-    this.text(label, x + w / 2, y + (h - 42) / 2, 34, COL.ink, 600, w - 20, 'center');
+    this.vtext(label, x + w / 2, y + h / 2, 34, COL.ink, 600, w - 20, 'center');
+    this.hits.push({ x, y, w, h, id, fn });
+  }
+  ghost(x, y, w, h, label, id, fn) { // text-only button: no fill, no stroke
+    this.vtext(label, x + w / 2, y + h / 2, 34, this.hover === id ? COL.teal : COL.ink, 600, w - 20, 'center');
     this.hits.push({ x, y, w, h, id, fn });
   }
 }
@@ -180,7 +191,7 @@ const choices = new Panel(1.5, 1.3, (p) => {
   p.hits.push({ x: 46, y: MY - MR, w: MR * 2, h: MR * 2, id: 'mic', fn: toggleMic });
   // skip: plain grey text, no fill or stroke
   const sx = W - 400, sy = H - 130, sw = 360, sh = 90, sk = p.hover === 'skip';
-  p.text('Skip. Not Sure.', sx + sw / 2, sy + (sh - 42) / 2, 34, sk ? '#4f5f65' : COL.grey, 600, sw - 20, 'center');
+  p.vtext('Skip. Not Sure.', sx + sw / 2, sy + sh / 2, 34, sk ? '#4f5f65' : COL.grey, 600, sw - 20, 'center');
   p.hits.push({ x: sx, y: sy, w: sw, h: sh, id: 'skip', fn: skip });
 }).place(1.0, 1.3, -1.05);
 
@@ -646,7 +657,7 @@ const dash = new Panel(1.6, 1.45, (p) => {
   const c = p.ctx, W = p.cv.width, H = p.cv.height;
   p.rr(4, 4, W - 8, H - 8, 40, 'rgba(240,245,247,.96)', COL.line);
   p.text('Welcome, Alex', 44, 34, 58, COL.ink, 700);
-  p.rr(560, 40, 420, 70, 35, '#fff', COL.line); p.text('Find a destination.', 600, 58, 32, '#9aa8ad');
+  p.rr(560, 40, 420, 70, 35, '#fff', COL.line); p.vtext('Find a destination.', 600, 75, 32, '#9aa8ad');
   const back = (t, mw = W - 160) => {
     p.text('←', 44, 150, 44, COL.ink, 600); p.text(t, 110, 156, 34, COL.grey, 500, mw);
     p.hits.push({ x: 30, y: 140, w: 80, h: 70, id: 'back', fn: () => gs(dState === 'mods' ? 'learn' : dState === 'learn' ? 'loc' : dState === 'locall' ? 'loc' : 'lang') });
@@ -664,7 +675,7 @@ const dash = new Panel(1.6, 1.45, (p) => {
     p.text(dMsg, 44, ay + 110, 30, COL.bad, 600, W - 88);
   } else if (dState === 'loc') {
     back('Popular French speaking locations.', W - 420);
-    p.btn(W - 44 - 220, 138, 220, 76, 'View All', 'all', () => gs('locall'));
+    p.ghost(W - 44 - 220, 138, 220, 76, 'View All', 'all', () => gs('locall'));
     const ay = carousel(p, 'l', 44, 235, W - 88, 410, LOCS.length, 226, 22, (i, x, y) => {
       const l = LOCS[i], on = selLoc === i, hv = p.hover === 'l' + i;
       c.save(); c.beginPath(); c.roundRect(x, y, 226, 226, 14); c.clip();
@@ -679,7 +690,8 @@ const dash = new Panel(1.6, 1.45, (p) => {
     p.btn(W - 44 - 290, ay + 2, 290, 80, 'Continue', 'go', goOn);
     p.text(dMsg, 44, ay + 110, 30, COL.bad, 600, W - 88);
   } else if (dState === 'locall') {
-    back('All French speaking locations.');
+    back('All French speaking locations.', W - 420);
+    p.ghost(W - 44 - 220, 138, 220, 76, 'View Less', 'less', () => gs('loc'));
     list(p, LOCS.map((l) => `${l.n} · ${l.c}`), null, selLoc, 205, 62, (i) => chooseLoc(i));
     p.btn(W - 44 - 290, H - 118, 290, 80, 'Continue', 'go', goOn);
     p.text(dMsg, 44, H - 108, 28, COL.bad, 600, W - 420);
