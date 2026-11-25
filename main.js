@@ -969,6 +969,11 @@ function iconPause(c, cx, cy, k, hv) {
   [-52, 52].forEach((x) => iconLayer(c, () => { c.beginPath(); c.roundRect(x - 12, -100, 24, 200, 12); }, hv, 24));
   c.restore();
 }
+function iconPlay(c, cx, cy, k, hv) {
+  c.save(); c.translate(cx, cy); c.scale(k, k);
+  iconLayer(c, () => roundPoly(c, [[-50, -100], [-50, 100], [90, 0]], 14), hv, 24);
+  c.restore();
+}
 function iconAccess(c, cx, cy, k, hv) {
   c.save(); c.translate(cx, cy); c.scale(k, k);
   iconLayer(c, () => { c.beginPath(); c.arc(0, -108, 20, 0, 7); }, hv, 34);
@@ -978,10 +983,10 @@ function iconAccess(c, cx, cy, k, hv) {
 const HUD_PAUSE = ['deskintro', 'desk', 'level', 'street', 'cafe', 'result'];
 const hudOn = () => HUD_PAUSE.includes(cur) || cur === 'dash';
 const hud = new Panel(.17, .4, (p) => {
-  const W = p.cv.width, H = p.cv.height, havePause = HUD_PAUSE.includes(cur) && !modal, kP = .9, kA = .92;
-  if (havePause) {
-    p.hits.push({ x: W / 2 - 120, y: H * .25 - 150, w: 240, h: 300, id: 'pause', fn: () => (modal === 'pause' ? closeModal() : openModal('pause')) });
-    iconPause(p.ctx, W / 2, H * .25, kP, p.hover === 'pause');
+  const W = p.cv.width, H = p.cv.height, havePause = HUD_PAUSE.includes(cur), kP = .9, kA = .92;
+  if (havePause) { // pause icon normally; while paused or in settings it becomes a play icon that resumes
+    p.hits.push({ x: W / 2 - 120, y: H * .25 - 150, w: 240, h: 300, id: 'pause', fn: () => (modal ? closeModal() : openModal('pause')) });
+    (modal ? iconPlay : iconPause)(p.ctx, W / 2, H * .25, kP, p.hover === 'pause');
   }
   const ay = havePause ? H * .75 : H * .25;
   p.hits.push({ x: W / 2 - 140, y: ay - 160, w: 280, h: 320, id: 'access', fn: () => (modal === 'a11y' ? a11yBack() : openModal('a11y', modal === 'pause' ? 'pause' : null)) });
