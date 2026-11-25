@@ -208,10 +208,16 @@ function restage(p) {
   const y = stage.ey + s.dy + (s.edge === 'top' ? -h / 2 : s.edge === 'bottom' ? h / 2 : 0);
   p.mesh.position.set(x, y, z); p.mesh.lookAt(stage.ex, y, stage.ez);
 }
-function stageSet(force) {
+const SPK = { x: -.45, z: -3.1 }; // barista / receptionist stand here
+function stageSet(force, toSpeaker) {
   gazeNow();
-  const dot = stage.fx * d3.x + stage.fz * d3.z, mv = Math.hypot(o3.x - stage.ex, o3.z - stage.ez);
-  if (force || !stage.valid || dot < .8 || mv > .3) Object.assign(stage, { valid: true, ex: o3.x, ey: o3.y, ez: o3.z, fx: d3.x, fz: d3.z });
+  let ax = d3.x, az = d3.z, aim = false;
+  if (toSpeaker) { // if the speaker is roughly in front of the user, aim the stage at them so the text sits beside them, not on them
+    const sx = SPK.x - o3.x, sz = SPK.z - o3.z, sl = Math.hypot(sx, sz) || 1;
+    if ((sx * d3.x + sz * d3.z) / sl > .64) { ax = sx / sl; az = sz / sl; aim = true; }
+  }
+  const dot = stage.fx * ax + stage.fz * az, mv = Math.hypot(o3.x - stage.ex, o3.z - stage.ez);
+  if (force || aim || !stage.valid || dot < .8 || mv > .3) Object.assign(stage, { valid: true, ex: o3.x, ey: o3.y, ez: o3.z, fx: ax, fz: az });
   panels.forEach((p) => p.stg && restage(p));
   hudPlace();
 }
@@ -226,22 +232,22 @@ const streetCard = new Panel(1.1, .5, (p) => {
   const by = M + p.tm(card.t, 46, 700, tw) + 50;
   p.fit(by + 96 + M);
   scrim(c, 40, 40, W - 80, p.cv.height - 80, .6, 60, 70);
-  glow(c); p.ttext(card.t, W / 2, M, 46, '#fff', 700, tw, 'center'); glow(c, false);
-  p.pill(W / 2 - 250, by, 500, 96, card.b, 'enter', card.fn);
+  glow(c); p.ttext(card.t, M, M, 46, '#fff', 700, tw); glow(c, false);
+  p.pill(M - 10, by, 500, 96, card.b, 'enter', card.fn);
 }, 1100).soft({ edge: 'center', dy: 0, dist: 1.2 });
 
 /* the speaker's line: floats just above eye level, close to the user, and stays until the next line */
-const bubble = new Panel(1.1, .34, (p) => {
+const bubble = new Panel(.85, .34, (p) => {
   const c = p.ctx, W = p.cv.width, M = 70, tw = W - 2 * M, showE = showEn || A.en;
   const tag = mode === 'cafe' ? 'BARISTA' : 'INFORMATION DESK';
   const frT = M + 50, fr = p.tm(bubbleFr, 60, 700, tw), enT = frT + fr + 16, en = showE ? p.tm(bubbleEn, 38, 400, tw) : 0;
   p.fit((showE ? enT + en : frT + fr) + 50);
   scrim(c, 30, 30, W - 60, p.cv.height - 50, .55, 55, 70);
-  glow(c); c.letterSpacing = '6px'; p.ttext(tag, W / 2 + 3, M - 6, 24, GL, 700, tw, 'center'); c.letterSpacing = '0px';
-  p.ttext(bubbleFr, W / 2, frT, 60, '#fff', 700, tw, 'center');
-  if (showE) p.ttext(bubbleEn, W / 2, enT, 38, GG, 400, tw, 'center');
+  glow(c); c.letterSpacing = '6px'; p.ttext(tag, M, M - 6, 24, GL, 700, tw); c.letterSpacing = '0px';
+  p.ttext(bubbleFr, M, frT, 60, '#fff', 700, tw);
+  if (showE) p.ttext(bubbleEn, M, enT, 38, GG, 400, tw);
   glow(c, false);
-}, 1100).soft({ edge: 'bottom', dy: .09, dist: 1.1 });
+}, 850).soft({ edge: 'bottom', dy: .1, dist: 1.15, dx: .62 });
 
 /* reply choices (Figma: "Use the microphone to reply…", speaker icons, mic, "Skip. Not sure.") */
 let order_ = [];
@@ -259,7 +265,7 @@ const useCloud = () => !!STT_URL && CAN_REC && !cloudOff;
 const SIM_VOICE = true;
 const voiceOK = () => SIM_VOICE || useCloud() || (!!SR && !voiceOff);
 /* the reply choices: plain floating rows under the speaker's line (no boxes) */
-const choices = new Panel(1.1, .32, (p) => {
+const choices = new Panel(.85, .32, (p) => {
   const c = p.ctx, W = p.cv.width, M = 40, X0 = 70, tw = W - 2 * X0 - 130;
   order_ = order;
   const hs = order.map((o) => Math.max(100, (A.en ? p.tm(o.fr, 44, 500, tw) + 8 + p.tm(o.en, 30, 400, tw) : p.tm(o.fr, 44, 500, tw)) + 44));
@@ -279,22 +285,22 @@ const choices = new Panel(1.1, .32, (p) => {
     p.hits.push({ x: X0 - 24, y, w: W - 2 * X0 + 48, h, id: 'o' + i, fn: () => selectRow(i) });
     y += h;
   });
-}, 1100).soft({ edge: 'top', dy: -.06, dist: 1.1 });
+}, 850).soft({ edge: 'top', dy: -.06, dist: 1.15, dx: .62 });
 
 /* feedback / instruction line between the speaker's line and the replies; dissolves when its text changes */
 let fbShown = { t: '', c: COL.grey };
-const fbP = new Panel(1.1, .1, (p) => {
-  const c = p.ctx, W = p.cv.width, t = fbShown.t, tw = W - 200;
+const fbP = new Panel(.85, .1, (p) => {
+  const c = p.ctx, W = p.cv.width, t = fbShown.t, tw = W - 140;
   if (!t) return;
   p.fit(p.tm(t, 32, 600, tw) + 50);
-  scrim(c, 60, 10, W - 120, p.cv.height - 20, .5, 28, 34);
-  glow(c); p.ttext(t, W / 2, 25, 32, lite(fbShown.c), 600, tw, 'center'); glow(c, false);
-}, 1100).soft({ edge: 'top', dy: .0, dist: 1.1 });
+  scrim(c, 30, 10, W - 60, p.cv.height - 20, .5, 28, 34);
+  glow(c); p.ttext(t, 70, 25, 32, lite(fbShown.c), 600, tw); glow(c, false);
+}, 850).soft({ edge: 'top', dy: .0, dist: 1.15, dx: .62 });
 
 /* microphone: locked to the bottom centre of the user's view */
 const micP = new Panel(.8, .34, (p) => {
   const c = p.ctx, W = p.cv.width, cx = W / 2, MY = 110, MR = 74, vo = voiceOK();
-  scrim(c, 130, 15, W - 260, p.cv.height - 30, .5, 40, 80);
+  scrim(c, 40, 15, W - 80, p.cv.height - 30, .5, 40, 80);
   const micOn = vo && sel >= 0 && !busy && !thinking, mh = p.hover === 'mic' && micOn, mc = listening ? COL.bad : micOn ? '#2F8A8C' : '#9AA3A7';
   if (vo) {
     if (listening) { c.beginPath(); c.arc(cx, MY, MR + 16, 0, Math.PI * 2); c.strokeStyle = 'rgba(255,154,142,.55)'; c.lineWidth = 9; c.stroke(); }
@@ -308,15 +314,15 @@ const micP = new Panel(.8, .34, (p) => {
     p.hits.push({ x: cx - 90, y: MY - 90, w: 180, h: 180, id: 'mic', fn: toggleMic });
   }
   const sk = p.hover === 'skip';
-  glow(c); p.vtext('Skip. Not sure.', vo ? W - 120 : cx, MY, 28, sk ? '#fff' : GG, 600, 200, 'center'); glow(c, false);
-  p.hits.push({ x: vo ? W - 235 : cx - 120, y: MY - 50, w: 230, h: 100, id: 'skip', fn: skip });
+  glow(c); p.vtext('Skip. Not sure.', vo ? 120 : cx, MY, 28, sk ? '#fff' : GG, 600, 200, 'center'); glow(c, false);
+  p.hits.push({ x: vo ? 10 : cx - 120, y: MY - 50, w: 230, h: 100, id: 'skip', fn: skip });
 }, 800).soft();
-camera.add(micP.mesh); micP.mesh.position.set(0, -.43, -.8);
+camera.add(micP.mesh); micP.mesh.position.set(0, -.3, -.8);
 
 /* results (Figma: score gauge, "Excellent job!") */
 const result = new Panel(1.1, 1.1, (p) => {
-  const W = p.cv.width, M = 80, cx = W / 2, cy = M + 40 + 200;
-  const bodyB = 444 + p.tm(res.body, 36, 400, W - 160), by = bodyB + 40;
+  const W = p.cv.width, M = 90, cx = M + 240, cy = M + 40 + 200;
+  const bodyB = 444 + p.tm(res.body, 36, 400, W - 2 * M), by = bodyB + 40;
   p.fit(by + 96 + M); const c = p.ctx;
   scrim(c, 30, 30, W - 60, p.cv.height - 60, .6, 70, 120);
   c.lineWidth = 40; c.lineCap = 'round';
@@ -324,10 +330,10 @@ const result = new Panel(1.1, 1.1, (p) => {
   c.strokeStyle = GL; c.beginPath(); c.arc(cx, cy, 200, Math.PI, Math.PI + Math.PI * Math.max(score, .01) / 10); c.stroke();
   glow(c);
   p.text(score.toFixed(1), cx, cy - 70, 90, '#fff', 600, 400, 'center');
-  p.text(res.head, cx, 344, 70, GL, 700, W - 100, 'center');
-  p.ttext(res.body, cx, 444, 36, '#fff', 400, W - 160, 'center');
+  p.text(res.head, M, 344, 70, GL, 700, W - 2 * M);
+  p.ttext(res.body, M, 444, 36, '#fff', 400, W - 2 * M);
   glow(c, false);
-  p.pill(cx - 200, by, 400, 96, res.btn, 'again', res.fn);
+  p.pill(M - 10, by, 400, 96, res.btn, 'again', res.fn);
 }).soft({ edge: 'center', dy: -.05, dist: 1.6 });
 
 /* ---------- speech: recorded audio first, browser voice as placeholder ---------- */
@@ -571,7 +577,7 @@ function startTurn() {
   const old = talkP().some((p) => p.fa > .02);
   hideTalk();
   const go = () => {
-    stageSet(false);
+    stageSet(false, true);
     syncLine();
     speak(t.fr, `audio/${ap()}_barista.mp3`, () => { talking = false; showReplies(); });
   };
@@ -625,7 +631,7 @@ function next() {
   score = +(first / LINES.length * 10).toFixed(1);
   res = { head: score >= 8 ? 'Excellent job!' : score >= 5 ? 'Bon travail!' : 'Keep practicing!', body: `You answered ${first} of ${LINES.length} replies correctly on the first try.`, btn: 'Play again', fn: playAgain };
   cupLive = true; cupMsg = 'Votre cortado est prêt! Point at it and pull the trigger (or click) to grab it.';
-  hideTalk(); stageSet(false); cupHint.render(); cupHint.show(.7);
+  hideTalk(); stageSet(false, true); cupHint.render(); cupHint.show(.7);
 }
 function goCafe() { transition(() => { resetCup(); resetPay(); loadScript(CAFE); mode = 'cafe'; setScene('cafe'); turn = 0; first = 0; startTurn(); }); }
 function playAgain() { goCafe(); }
@@ -915,11 +921,12 @@ function list(p, items, subs, sel, y0, h, pickFn, enabled = () => true) {
   const c = p.ctx, W = p.cv.width;
   items.forEach((t, i) => {
     const y = y0 + i * (h + 16), hv = p.hover === 'r' + i, ok = enabled(i);
-    p.rr(44, y, W - 88, h, 20, hv && ok ? COL.mint : '#fff', sel === i ? COL.teal : COL.line, sel === i ? 6 : 3);
-    if (subs) { p.text(t, 76, y + 20, 32, ok ? COL.ink : '#9aa8ad', 400, W - 200); p.text(subs[i], 76, y + 64, 27, COL.grey, 400, W - 190); }
-    else p.text(t, 76, y + 22, 36, ok ? COL.ink : '#9aa8ad', 500, W - 220);
-    c.beginPath(); c.arc(W - 100, y + h / 2, 22, 0, 7); c.strokeStyle = COL.line; c.lineWidth = 4; c.stroke();
-    if (sel === i) { c.beginPath(); c.arc(W - 100, y + h / 2, 12, 0, 7); c.fillStyle = COL.teal; c.fill(); }
+    p.rr(44, y, W - 88, h, 20, ok ? (hv ? COL.mint : '#fff') : '#E9EDEF', sel === i && ok ? COL.teal : ok ? COL.line : '#DCE2E5', sel === i && ok ? 6 : 3);
+    if (subs) { p.text(t, 76, y + 20, 32, ok ? COL.ink : '#A9B4B9', 400, W - 200); p.text(subs[i], 76, y + 64, 27, ok ? COL.grey : '#B9C3C7', 400, W - 190); }
+    else p.text(t, 76, y + 22, 36, ok ? COL.ink : '#A9B4B9', 500, W - 220);
+    if (ok) { c.beginPath(); c.arc(W - 100, y + h / 2, 22, 0, 7); c.strokeStyle = COL.line; c.lineWidth = 4; c.stroke(); }
+    else p.text('Coming soon', W - 76, y + h / 2 - 14, 24, '#A9B4B9', 600, 220, 'right');
+    if (sel === i && ok) { c.beginPath(); c.arc(W - 100, y + h / 2, 12, 0, 7); c.fillStyle = COL.teal; c.fill(); }
     p.hits.push({ x: 44, y, w: W - 88, h, id: 'r' + i, fn: () => pickFn(i) });
   });
 }
@@ -969,7 +976,7 @@ const dash = new Panel(1.6, 1.45, (p) => {
     p.text(dMsg, 44, 767, 28, COL.bad, 600, W - 420);
   } else {
     back('What do you want to learn?');
-    list(p, LEARN, LEARN_SUB, pLearn, 215, 116, (i) => { pLearn = i; dMsg = ''; dash.render(); });
+    list(p, LEARN, LEARN_SUB, pLearn, 215, 116, (i) => { if (i !== 1) { dMsg = 'Coming soon. This prototype has the café ordering module only.'; return dash.render(); } pLearn = i; dMsg = ''; dash.render(); }, (i) => i === 1);
     const by = 215 + LEARN.length * 132 + 22;
     p.btn(W - 44 - 200, by, 200, 70, 'Continue', 'go', () => {
       if (pLearn < 0) { dMsg = 'Choose a topic to continue.'; dash.render(); }
@@ -1025,12 +1032,12 @@ const cupHandle = new THREE.Mesh(new THREE.TorusGeometry(.016, .004, 6, 12), cup
 const coffee = new THREE.Mesh(new THREE.CylinderGeometry(.033, .033, .004, 20), M('#5a3a22')); coffee.position.y = .066; cupG.add(coffee);
 const cupGrab = new THREE.Mesh(new THREE.SphereGeometry(.14, 8, 6), new THREE.MeshBasicMaterial({ visible: false })); cupGrab.position.y = .05; cupG.add(cupGrab);
 room.steam(cupG, 0, .085, 0, 1);
-const cupHint = new Panel(1.1, .2, (p) => {
+const cupHint = new Panel(.85, .2, (p) => {
   const c = p.ctx, W = p.cv.width, M = 60;
-  p.fit(M * 2 + p.tm(cupMsg, 46, 700, W - 160));
+  p.fit(M * 2 + p.tm(cupMsg, 46, 700, W - 140));
   scrim(c, 30, 20, W - 60, p.cv.height - 40, .55, 50, 70);
-  glow(c); p.ttext(cupMsg, W / 2, M, 46, GL, 700, W - 160, 'center'); glow(c, false);
-}, 1100).soft({ edge: 'top', dy: .1, dist: 1.0 });
+  glow(c); p.ttext(cupMsg, 70, M, 46, GL, 700, W - 140); glow(c, false);
+}, 850).soft({ edge: 'top', dy: .1, dist: 1.15, dx: .62 });
 function resetCup() {
   cupLive = false; cupHeld = null; cupG.visible = false; saucer.visible = true;
   cupG.position.set(.55, 1.052, -1.98); cupG.scale.setScalar(1.3); cupHint.snap();
@@ -1108,7 +1115,7 @@ function frontOf(mesh, dist, dy = 0) {
 }
 function hudPlace() {
   if ((cur === 'cafe' || cur === 'desk') && stage.valid) { // sits just right of the dialogue, in the same place all step
-    const dx = .68 * (A.big ? 1.25 : 1), d = 1.1, y = stage.ey + .02;
+    const dx = -.62 * (A.big ? 1.25 : 1), d = 1.1, y = stage.ey - .05;
     hud.mesh.position.set(stage.ex + stage.fx * d - stage.fz * dx, y, stage.ez + stage.fz * d + stage.fx * dx);
     hud.mesh.lookAt(stage.ex, y, stage.ez);
     return;
@@ -1223,14 +1230,14 @@ const PAY_Z = -1.4;
 const v3 = new THREE.Vector3(), w3 = new THREE.Vector3();
 let payOn = false, payDone = true, payHolder = null, payNear = 0, mouseTerm = null, actx = null;
 const card3d = room.makeCard();
-const payHint = new Panel(1.0, .3, (p) => {
+const payHint = new Panel(.85, .3, (p) => {
   const c = p.ctx, W = p.cv.width, M = 50, t1 = 'Tap your card on the terminal to pay.', t2 = 'You can also point at the terminal and pull the trigger.';
   const b1 = M + p.tm(t1, 40, 700, W - 140), t2top = b1 + 14, b2 = t2top + p.tm(t2, 28, 400, W - 140), by = b2 + 34;
   p.fit(by + 72 + M);
   scrim(c, 30, 20, W - 60, p.cv.height - 40, .55, 50, 70);
-  glow(c); p.ttext(t1, W / 2, M, 40, '#fff', 700, W - 140, 'center'); p.ttext(t2, W / 2, t2top, 28, GG, 400, W - 140, 'center'); glow(c, false);
-  p.pill(W / 2 - 110, by, 220, 72, 'Skip', 'skiptap', tapDone);
-}, 1000).soft({ edge: 'top', dy: -.02, dist: 1.0 });
+  glow(c); p.ttext(t1, 70, M, 40, '#fff', 700, W - 140); p.ttext(t2, 70, t2top, 28, GG, 400, W - 140); glow(c, false);
+  p.pill(60, by, 220, 72, 'Skip', 'skiptap', tapDone);
+}, 850).soft({ edge: 'top', dy: -.02, dist: 1.15, dx: .62 });
 function beep() {
   try {
     actx = actx || new (window.AudioContext || window.webkitAudioContext)();
@@ -1252,7 +1259,7 @@ function startPayment(p) {
     payHolder = pickHand(); payNear = 0; payOn = true;
     if (payHolder === 'mouse') { camera.add(card3d); card3d.position.set(.2, -.2, -.55); card3d.rotation.set(1.0, 0, -.15); card3d.scale.setScalar(1.5); }
     else { payHolder.add(card3d); card3d.position.set(0, -.012, -.1); card3d.rotation.set(0, 0, 0); card3d.scale.setScalar(1); }
-    stageSet(true); payHint.render(); payHint.show(.9);
+    stageSet(true, true); payHint.render(); payHint.show(.9);
     bubbleFr = p.fr; bubbleEn = p.en; showEn = true; talking = true; syncLine();
     speak(p.fr, 'audio/pay.mp3', () => { talking = false; });
   });
