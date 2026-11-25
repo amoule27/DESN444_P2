@@ -37,10 +37,10 @@ rig.add(camera);
 scene.add(rig);
 addEventListener('resize', () => { camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix(); renderer.setSize(innerWidth, innerHeight); });
 
-scene.add(new THREE.HemisphereLight(0xffffff, 0x887766, 1.2));
+const gHemi = new THREE.HemisphereLight(0xffffff, 0x887766, 1.2);
 const sun = new THREE.DirectionalLight(0xfff2dd, 1.1);
 sun.position.set(3, 6, 2);
-scene.add(sun);
+scene.add(gHemi, sun);
 
 /* ---------- small helpers ---------- */
 const M = (c) => new THREE.MeshLambertMaterial({ color: c });
@@ -545,7 +545,8 @@ function setScene(name) {
   scene.fog = on('street', 'tip') ? new THREE.Fog('#a9d6f5', 18, 50) : null;
   if (on('dash')) { globe.position.set(.95, 1.45, -2.1); globe.scale.setScalar(.6); } else { globe.position.set(0, .2, -7); globe.scale.setScalar(3.5); }
   renderer.shadowMap.needsUpdate = true;
-  renderer.toneMapping = on('cafe', 'result') ? THREE.ACESFilmicToneMapping : THREE.NoToneMapping;
+  gHemi.visible = sun.visible = !on('desk', 'deskintro', 'level'); // the airport has its own lighting
+  renderer.toneMapping = on('cafe', 'result', 'desk', 'deskintro', 'level') ? THREE.ACESFilmicToneMapping : THREE.NoToneMapping;
   hud.mesh.visible = hudOn(); hudPlace(); hud.render();
   [loading, sign, dash, streetCard].forEach((p) => p.mesh.visible && p.render());
 }
@@ -876,7 +877,7 @@ const dash = new Panel(1.6, 1.45, (p) => {
 
 /* info desk: low-poly airport arrivals hall (built in airport3d.js) */
 const desk = new THREE.Group(); scene.add(desk);
-const rec = buildAirport({ parent: desk, FONT }).rec;
+const rec = buildAirport({ parent: desk, renderer, FONT }).rec;
 
 /* flow */
 function boot() {
