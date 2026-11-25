@@ -22,7 +22,9 @@ renderer.shadowMap.autoUpdate = false; // refreshed every few frames in the main
 renderer.shadowMap.needsUpdate = true;
 renderer.toneMappingExposure = 1.05;
 document.body.appendChild(renderer.domElement);
-document.body.appendChild(VRButton.createButton(renderer));
+const vrBtn = VRButton.createButton(renderer);
+document.body.appendChild(vrBtn);
+vrBtn.addEventListener('click', () => { try { prewarmMic(); } catch (e) {} }, true);
 const scene = new THREE.Scene();
 const camera = new THREE.PerspectiveCamera(70, innerWidth / innerHeight, 0.05, 120);
 camera.rotation.order = 'YXZ';
@@ -191,7 +193,18 @@ const bubble = new Panel(1.3, 0.62, (p) => {
 /* reply choices (Figma: "Use the microphone to reply…", speaker icons, mic, "Skip. Not sure.") */
 let order_ = [];
 let listening = false, sel = -1, voiceOff = false;
-const voiceOK = () => !!SR && !voiceOff;
+/* Cloud speech-to-text (recommended on Quest Browser, which has no built-in recogniser).
+   Set STT_DEFAULT to your Cloudflare Worker address (see stt-proxy/README.md), or test with ?stt=https://your-worker.workers.dev once. */
+const STT_DEFAULT = '';
+let STT_URL = STT_DEFAULT;
+try { const q = new URLSearchParams(location.search).get('stt'); if (q !== null) localStorage.setItem('fvr-stt', q); STT_URL = localStorage.getItem('fvr-stt') || STT_DEFAULT; } catch (e) {}
+const CAN_REC = !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia && window.MediaRecorder);
+let cloudOff = false, thinking = false, cloud = null, sttTok = 0, sttFails = 0, micStream = null;
+const useCloud = () => !!STT_URL && CAN_REC && !cloudOff;
+/* Prototype mode: the mic button shows a "listening" animation, then accepts the selected reply as if it had been spoken.
+   Set to false to use real recognition (cloud proxy or browser speech) instead. */
+const SIM_VOICE = true;
+const voiceOK = () => SIM_VOICE || useCloud() || (!!SR && !voiceOff);
 const choices = new Panel(1.5, 1.3, (p) => {
   const c = p.ctx, W = p.cv.width, PAD = 24, MR = 60, MY = 750;
   p.fit(MY + MR + PAD); const H = p.cv.height;
@@ -209,7 +222,7 @@ const choices = new Panel(1.5, 1.3, (p) => {
   });
   p.text(msg.t, 48, 600, 30, msg.c, 600, W - 96);
   // microphone: grey and disabled until a reply is selected (Figma frame 17), teal when ready (frame 59)
-  const micOn = voiceOK() && sel >= 0 && !busy, mh = p.hover === 'mic' && micOn, mc = listening ? COL.bad : micOn ? '#4A9798' : '#A5A5A5';
+  const micOn = voiceOK() && sel >= 0 && !busy && !thinking, mh = p.hover === 'mic' && micOn, mc = listening ? COL.bad : micOn ? '#4A9798' : '#A5A5A5';
   if (listening) { c.beginPath(); c.arc(106, MY, MR + 14, 0, Math.PI * 2); c.strokeStyle = 'rgba(192,72,59,.3)'; c.lineWidth = 8; c.stroke(); }
   c.save(); c.shadowColor = 'rgba(0,0,0,.22)'; c.shadowBlur = 18; c.shadowOffsetY = 8;
   c.beginPath(); c.arc(106, MY, MR, 0, Math.PI * 2);
@@ -217,7 +230,7 @@ const choices = new Panel(1.5, 1.3, (p) => {
   c.fillStyle = listening ? '#FBE3E0' : mh ? '#E6F8F8' : mg; c.fill(); c.restore();
   c.beginPath(); c.arc(106, MY, MR, 0, Math.PI * 2); c.strokeStyle = listening ? COL.bad : micOn ? '#B9DADA' : '#A5A5A5'; c.lineWidth = 5; c.stroke();
   micIcon(c, 106, MY, 100, mc);
-  const lab = !voiceOK() ? '' : listening ? 'Listening… tap to stop' : micOn ? 'Tap to speak' : 'Select a reply first';
+  const lab = !voiceOK() ? '' : thinking ? 'Checking…' : listening ? 'Listening… tap to stop' : micOn ? 'Tap to speak' : 'Select a reply first';
   p.text(lab, 190, MY - 18, 30, listening ? COL.bad : micOn ? COL.teal : COL.grey, 600, W - 640);
   p.hits.push({ x: 46, y: MY - MR, w: MR * 2, h: MR * 2, id: 'mic', fn: toggleMic });
   // skip: plain grey text, no fill or stroke
@@ -302,8 +315,9 @@ function sim(heard, want) {
 }
 function stopListening() {
   clearTimeout(recTimer);
-  const was = listening;
-  listening = false;
+  const was = listening || thinking;
+  listening = false; thinking = false; sttTok++;
+  if (cloud) { const c = cloud; cloud = null; c.cancelled = true; cloudClean(c); try { if (c.rec.state !== 'inactive') c.rec.stop(); } catch (e) {} }
   if (srec) { const r = srec; srec = null; r.onresult = r.onerror = r.onend = null; try { r.abort(); } catch (e) {} }
   if (was && choices.mesh.visible) choices.render();
 }
@@ -323,12 +337,20 @@ function heardIt(alts) {
   else { msg = { t: `I heard “${alts[0]}”. Try saying: “${o.fr}”`, c: COL.bad }; choices.render(); }
 }
 function toggleMic() {
-  if (busy || paused || modal) return;
+  if (busy || paused || modal || thinking) return;
   if (!voiceOK()) return;
   if (sel < 0) { msg = { t: 'Select a reply first, then tap the microphone.', c: COL.grey }; return choices.render(); }
-  if (listening) { stopListening(); msg = { t: '', c: COL.grey }; return choices.render(); }
+  if (listening) { if (cloud && !cloud.finishing) return cloudFinish(); stopListening(); msg = { t: '', c: COL.grey }; return choices.render(); }
   if (talking) { msg = { t: 'Wait until the barista has finished, then tap the mic.', c: COL.grey }; return choices.render(); }
   try { synth && synth.cancel(); } catch (e) {}
+  if (SIM_VOICE) {
+    const o = order[sel];
+    listening = true; msg = { t: 'Listening… say your reply in French.', c: COL.teal }; choices.render();
+    clearTimeout(recTimer);
+    recTimer = setTimeout(() => { if (!listening) return; listening = false; pick(o, o.fr); }, 2400);
+    return;
+  }
+  if (useCloud()) return cloudStart();
   const r = new SR();
   srec = r; r.lang = 'fr-CA'; r.interimResults = false; r.continuous = false; r.maxAlternatives = 5;
   let got = false;
@@ -347,6 +369,88 @@ function toggleMic() {
     recTimer = setTimeout(() => { if (srec === r) { try { r.stop(); } catch (e) {} } }, 9000);
   } catch (e) { srec = null; voiceOff = true; msg = { t: micError('other'), c: COL.bad }; }
   choices.render();
+}
+
+/* ---------- cloud speech-to-text: record the mic, send to the proxy, match the transcript ---------- */
+async function getMic() {
+  if (micStream && micStream.getAudioTracks().some((t) => t.readyState === 'live')) return micStream;
+  micStream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, channelCount: 1 } });
+  return micStream;
+}
+function prewarmMic() { if (useCloud()) getMic().then(() => { micReady(); }).catch(() => {}); }
+function micReady() { const b = document.getElementById('micbtn'); if (b) { b.textContent = 'Microphone ready ✓'; b.disabled = true; } }
+(() => { // small "Enable microphone" button on the 2D page, so the permission prompt happens before you enter VR
+  if (!useCloud()) return;
+  const h = document.getElementById('hint'); if (!h) return;
+  const b = document.createElement('button'); b.id = 'micbtn'; b.textContent = 'Enable microphone';
+  b.style.cssText = 'display:block;margin-top:8px;padding:6px 12px;border-radius:10px;border:1px solid #BFEDEF;background:#fff;color:#1F9AA0;font:600 14px inherit;cursor:pointer';
+  b.onclick = () => getMic().then(micReady).catch(() => { b.textContent = 'Microphone blocked: allow it in the browser'; });
+  h.appendChild(b);
+  navigator.permissions && navigator.permissions.query({ name: 'microphone' }).then((r) => { if (r.state === 'granted') getMic().then(micReady).catch(() => {}); }).catch(() => {});
+})();
+function cloudClean(c) {
+  clearInterval(c.iv); clearTimeout(c.timer);
+  try { c.src && c.src.disconnect(); } catch (e) {}
+  try { if (c.ctx) { const x = c.ctx; c.ctx = null; x.close().catch(() => {}); } } catch (e) {}
+}
+function cloudFinish() {
+  const c = cloud; if (!c || c.finishing) return;
+  c.finishing = true; cloudClean(c);
+  try { c.rec.stop(); } catch (e) { c.rec.onstop && c.rec.onstop(); }
+}
+async function cloudStart() {
+  const my = ++sttTok;
+  listening = true; msg = { t: 'Listening… say your reply in French.', c: COL.teal }; choices.render();
+  try {
+    const stream = await getMic();
+    if (my !== sttTok) return;
+    const mime = ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4', 'audio/ogg;codecs=opus'].find((m) => MediaRecorder.isTypeSupported(m)) || '';
+    const rec = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined);
+    const c = cloud = { rec, chunks: [], mime: rec.mimeType || mime || 'audio/webm', heard: false, t0: performance.now(), last: 0 };
+    rec.ondataavailable = (e) => { if (e.data && e.data.size) c.chunks.push(e.data); };
+    rec.onstop = async () => {
+      if (c.cancelled || cloud !== c) return;
+      cloud = null; cloudClean(c); listening = false;
+      if (!c.heard || !c.chunks.length) { msg = { t: micError('no-speech'), c: COL.grey }; return choices.render(); }
+      thinking = true; msg = { t: 'Checking what you said…', c: COL.teal }; choices.render();
+      const tok = ++sttTok;
+      try {
+        const res = await fetch(STT_URL, { method: 'POST', headers: { 'Content-Type': c.mime.split(';')[0] }, body: new Blob(c.chunks, { type: c.mime }) });
+        if (!res.ok) throw new Error('stt ' + res.status);
+        const j = await res.json();
+        if (tok !== sttTok) return;
+        thinking = false; sttFails = 0;
+        const t = (j.text || '').trim();
+        if (!t) { msg = { t: micError('no-speech'), c: COL.grey }; return choices.render(); }
+        heardIt([t]);
+      } catch (e) {
+        if (tok !== sttTok) return;
+        thinking = false;
+        if (++sttFails >= 2) cloudOff = true; // fall back to point-and-trigger after two failures
+        msg = { t: micError('network'), c: COL.bad }; choices.render();
+      }
+    };
+    // voice-activity detection: stop ~1.1 s after you finish speaking (or after 9 s)
+    try {
+      const AC = window.AudioContext || window.webkitAudioContext;
+      c.ctx = new AC(); c.ctx.resume && c.ctx.resume();
+      const an = c.ctx.createAnalyser(); an.fftSize = 1024;
+      c.src = c.ctx.createMediaStreamSource(stream); c.src.connect(an);
+      const buf = new Float32Array(an.fftSize);
+      c.iv = setInterval(() => {
+        an.getFloatTimeDomainData(buf);
+        let sum = 0; for (let i = 0; i < buf.length; i++) sum += buf[i] * buf[i];
+        const now = performance.now();
+        if (Math.sqrt(sum / buf.length) > .015) { c.heard = true; c.last = now; }
+        if ((c.heard && now - c.last > 1100 && now - c.t0 > 1500) || now - c.t0 > (c.heard ? 9000 : 6500)) cloudFinish();
+      }, 80);
+    } catch (e) { c.heard = true; c.timer = setTimeout(cloudFinish, 5000); }
+    rec.start();
+  } catch (e) {
+    if (my !== sttTok) return;
+    listening = false; cloudOff = true;
+    msg = { t: micError(e && e.name === 'NotFoundError' ? 'audio-capture' : 'not-allowed'), c: COL.bad }; choices.render();
+  }
 }
 
 /* ---------- dialogue flow ---------- */
