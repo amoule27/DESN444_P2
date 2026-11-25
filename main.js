@@ -239,15 +239,15 @@ const streetCard = new Panel(1.1, .5, (p) => {
 /* the speaker's line: floats just above eye level, close to the user, and stays until the next line */
 const bubble = new Panel(.85, .34, (p) => {
   const c = p.ctx, W = p.cv.width, M = 70, tw = W - 2 * M, showE = showEn || A.en;
-  const tag = mode === 'cafe' ? 'BARISTA' : 'INFORMATION DESK';
-  const frT = M + 50, fr = p.tm(bubbleFr, 60, 700, tw), enT = frT + fr + 16, en = showE ? p.tm(bubbleEn, 38, 400, tw) : 0;
+  const tag = mode === 'cafe' ? 'Barista' : 'Information desk';
+  const frT = M + 50, fr = p.tm(bubbleFr, 50, 700, tw), enT = frT + fr + 16, en = showE ? p.tm(bubbleEn, 38, 400, tw) : 0;
   p.fit((showE ? enT + en : frT + fr) + 50);
   scrim(c, 30, 30, W - 60, p.cv.height - 50, .55, 55, 70);
-  glow(c); c.letterSpacing = '6px'; p.ttext(tag, M, M - 6, 24, GL, 700, tw); c.letterSpacing = '0px';
-  p.ttext(bubbleFr, M, frT, 60, '#fff', 700, tw);
+  glow(c); p.ttext(tag, M, M - 6, 24, GL, 400, tw);
+  p.ttext(bubbleFr, M, frT, 50, '#fff', 700, tw);
   if (showE) p.ttext(bubbleEn, M, enT, 38, GG, 400, tw);
   glow(c, false);
-}, 850).soft({ edge: 'bottom', dy: .1, dist: 1.15, dx: .62 });
+}, 850).soft({ edge: 'bottom', dy: .1, dist: 1.15, dx: .76 });
 
 /* reply choices (Figma: "Use the microphone to reply…", speaker icons, mic, "Skip. Not sure.") */
 let order_ = [];
@@ -285,7 +285,7 @@ const choices = new Panel(.85, .32, (p) => {
     p.hits.push({ x: X0 - 24, y, w: W - 2 * X0 + 48, h, id: 'o' + i, fn: () => selectRow(i) });
     y += h;
   });
-}, 850).soft({ edge: 'top', dy: -.06, dist: 1.15, dx: .62 });
+}, 850).soft({ edge: 'top', dy: -.06, dist: 1.15, dx: .76 });
 
 /* feedback / instruction line between the speaker's line and the replies; dissolves when its text changes */
 let fbShown = { t: '', c: COL.grey };
@@ -295,7 +295,7 @@ const fbP = new Panel(.85, .1, (p) => {
   p.fit(p.tm(t, 32, 600, tw) + 50);
   scrim(c, 30, 10, W - 60, p.cv.height - 20, .5, 28, 34);
   glow(c); p.ttext(t, 70, 25, 32, lite(fbShown.c), 600, tw); glow(c, false);
-}, 850).soft({ edge: 'top', dy: .0, dist: 1.15, dx: .62 });
+}, 850).soft({ edge: 'top', dy: .0, dist: 1.15, dx: .76 });
 
 /* microphone: locked to the bottom centre of the user's view */
 const micP = new Panel(.8, .34, (p) => {
@@ -314,10 +314,10 @@ const micP = new Panel(.8, .34, (p) => {
     p.hits.push({ x: cx - 90, y: MY - 90, w: 180, h: 180, id: 'mic', fn: toggleMic });
   }
   const sk = p.hover === 'skip';
-  glow(c); p.vtext('Skip. Not sure.', vo ? 120 : cx, MY, 28, sk ? '#fff' : GG, 600, 200, 'center'); glow(c, false);
-  p.hits.push({ x: vo ? 10 : cx - 120, y: MY - 50, w: 230, h: 100, id: 'skip', fn: skip });
+  glow(c); const sx = vo ? cx + MR + 24 : cx - 60, sc = sk ? '#fff' : GG; p.vtext('Skip.', sx, MY - 18, 28, sc, 600, 130, 'left'); p.vtext('Not sure.', sx, MY + 18, 28, sc, 600, 130, 'left'); glow(c, false);
+  p.hits.push({ x: vo ? cx + MR + 14 : cx - 70, y: MY - 50, w: 140, h: 100, id: 'skip', fn: skip });
 }, 800).soft();
-camera.add(micP.mesh); micP.mesh.position.set(0, -.3, -.8);
+camera.add(micP.mesh); micP.mesh.position.set(0, -.27, -.8);
 
 /* results (Figma: score gauge, "Excellent job!") */
 const result = new Panel(1.1, 1.1, (p) => {
@@ -1037,7 +1037,7 @@ const cupHint = new Panel(.85, .2, (p) => {
   p.fit(M * 2 + p.tm(cupMsg, 46, 700, W - 140));
   scrim(c, 30, 20, W - 60, p.cv.height - 40, .55, 50, 70);
   glow(c); p.ttext(cupMsg, 70, M, 46, GL, 700, W - 140); glow(c, false);
-}, 850).soft({ edge: 'top', dy: .1, dist: 1.15, dx: .62 });
+}, 850).soft({ edge: 'top', dy: .1, dist: 1.15, dx: .76 });
 function resetCup() {
   cupLive = false; cupHeld = null; cupG.visible = false; saucer.visible = true;
   cupG.position.set(.55, 1.052, -1.98); cupG.scale.setScalar(1.3); cupHint.snap();
@@ -1115,7 +1115,7 @@ function frontOf(mesh, dist, dy = 0) {
 }
 function hudPlace() {
   if ((cur === 'cafe' || cur === 'desk') && stage.valid) { // sits just right of the dialogue, in the same place all step
-    const dx = 1.12 * (A.big ? 1.25 : 1), d = 1.0, y = stage.ey - .05; // right of the dialogue column
+    const dx = 1.26 * (A.big ? 1.25 : 1), d = 1.0, y = stage.ey - .05; // right of the dialogue column
     hud.mesh.position.set(stage.ex + stage.fx * d - stage.fz * dx, y, stage.ez + stage.fz * d + stage.fx * dx);
     hud.mesh.lookAt(stage.ex, y, stage.ez);
     return;
@@ -1237,7 +1237,7 @@ const payHint = new Panel(.85, .3, (p) => {
   scrim(c, 30, 20, W - 60, p.cv.height - 40, .55, 50, 70);
   glow(c); p.ttext(t1, 70, M, 40, '#fff', 700, W - 140); p.ttext(t2, 70, t2top, 28, GG, 400, W - 140); glow(c, false);
   p.pill(60, by, 220, 72, 'Skip', 'skiptap', tapDone);
-}, 850).soft({ edge: 'top', dy: -.02, dist: 1.15, dx: .62 });
+}, 850).soft({ edge: 'top', dy: -.02, dist: 1.15, dx: .76 });
 function beep() {
   try {
     actx = actx || new (window.AudioContext || window.webkitAudioContext)();
