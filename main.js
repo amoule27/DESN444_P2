@@ -322,7 +322,7 @@ camera.add(micP.mesh); micP.mesh.position.set(0, -.3, -.8);
 /* results (Figma: score gauge, "Excellent job!") */
 const result = new Panel(1.1, 1.1, (p) => {
   const W = p.cv.width, M = 90, cx = M + 240, cy = M + 40 + 200;
-  const bodyB = 444 + p.tm(res.body, 36, 400, W - 2 * M), by = bodyB + 40;
+  const bodyB = 504 + p.tm(res.body, 36, 400, W - 2 * M), by = bodyB + 40;
   p.fit(by + 96 + M); const c = p.ctx;
   scrim(c, 30, 30, W - 60, p.cv.height - 60, .6, 70, 120);
   c.lineWidth = 40; c.lineCap = 'round';
@@ -330,8 +330,8 @@ const result = new Panel(1.1, 1.1, (p) => {
   c.strokeStyle = GL; c.beginPath(); c.arc(cx, cy, 200, Math.PI, Math.PI + Math.PI * Math.max(score, .01) / 10); c.stroke();
   glow(c);
   p.text(score.toFixed(1), cx, cy - 70, 90, '#fff', 600, 400, 'center');
-  p.text(res.head, M, 344, 70, GL, 700, W - 2 * M);
-  p.ttext(res.body, M, 444, 36, '#fff', 400, W - 2 * M);
+  p.text(res.head, M, 404, 70, GL, 700, W - 2 * M);
+  p.ttext(res.body, M, 504, 36, '#fff', 400, W - 2 * M);
   glow(c, false);
   p.pill(M - 10, by, 400, 96, res.btn, 'again', res.fn);
 }).soft({ edge: 'center', dy: -.05, dist: 1.6 });
@@ -756,16 +756,9 @@ function logo(c, x, y, s, hole) {
 }
 const loading = new Panel(1.2, .8, (p) => {
   const c = p.ctx, W = p.cv.width;
-  if (cur === 'tip') {
-    const PAD = PANEL_PAD, t1 = 'Use your map to navigate the neighbourhood.', t2 = 'Look for the café on your route, then walk in.';
-    const b1 = PAD + p.tm(t1, 52, 600, W - 140), t2top = b1 + 40, b2 = t2top + p.tm(t2, 36, 400, W - 160), rowCy = b2 + 64;
-    p.fit(rowCy + 40 + PAD); const H = p.cv.height;
-    p.rr(4, 4, W - 8, H - 8, 40, '#fff', COL.line);
-    p.ttext(t1, W / 2, PAD, 52, COL.ink, 600, W - 140, 'center');
-    p.ttext(t2, W / 2, t2top, 36, COL.grey, 400, W - 160, 'center');
-    logo(c, 140, rowCy, 40, '#fff'); p.vtext('Connecting you…', 210, rowCy, 40, COL.ink, 500);
-  } else {
-    const H = p.cv.height; logo(c, W / 2, 230, 110); p.text('Connecting you…', W / 2, 400, 48, '#fff', 500, W, 'center'); }
+  const H = p.cv.height;
+  if (cur === 'tip') scrim(c, W / 2 - 330, 60, 660, 400, .55, 70, 200); // keeps the white text readable over the street photo
+  logo(c, W / 2, 230, 110); glow(c); p.text('Connecting you…', W / 2, 400, 48, '#fff', 500, W, 'center'); glow(c, false);
 }).place(0, 1.5, -1.6);
 
 /* sign-in: two Figma frames ("Sign In" steps + one-time code, then "Hello, Alex!") that dissolve into each other.
