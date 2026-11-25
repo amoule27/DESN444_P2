@@ -90,6 +90,7 @@ const panels = [];
 class Panel {
   constructor(w, h, drawFn, px = 1024) {
     this.w = w; this.h = h; this.fn = drawFn; this.hits = []; this.hover = null;
+    this.f = false; this.fa = 0; this.ft = 0; this.fd = 0; this.mod = 1; this.stg = null;
     this.cv = document.createElement('canvas');
     this.cv.width = px; this.cv.height = Math.round(px * h / w);
     this.ctx = this.cv.getContext('2d');
@@ -106,7 +107,7 @@ class Panel {
     if (faceUser) this.mesh.lookAt(0, y, 0);
     return this;
   }
-  render() { this.ctx.clearRect(0, 0, this.cv.width, this.cv.height); this.hits = []; this.fn(this); this.tex.needsUpdate = true; }
+  render() { this.ctx.clearRect(0, 0, this.cv.width, this.cv.height); this.hits = []; this.fn(this); this.tex.needsUpdate = true; if (this.stg && stage.valid) restage(this); }
   setHover(id) { if (id !== this.hover) { this.hover = id; this.render(); } }
   at(uv) {
     const x = uv.x * this.cv.width, y = (1 - uv.y) * this.cv.height;
@@ -166,32 +167,81 @@ class Panel {
   }
 }
 
+
+/* ---------- floating, card-less UI: soft dissolves + gaze-anchored "stage" ---------- */
+const ease = (x) => x * x * (3 - 2 * x);
+Object.assign(Panel.prototype, {
+  soft(stg) { this.f = true; this.noScale = true; this.stg = stg || null; this.mesh.material.opacity = 0; return this; },
+  show(d = 0) { this.ft = 1; this.fd = d; this.mesh.visible = true; return this; },
+  hide() { this.ft = 0; this.fd = 0; return this; },
+  snap() { this.fa = this.ft = this.fd = 0; this.mesh.visible = false; this.applyOpacity(); return this; },
+  applyOpacity() { this.mesh.material.opacity = (this.f ? ease(this.fa) : 1) * this.mod; },
+});
+const GL = '#7FE3E8', GK = '#7BE0A9', GR = '#FF9A8E', GG = '#d3e3e6';
+const lite = (c) => (c === COL.ok ? GK : c === COL.bad ? GR : c === COL.teal ? GL : GG);
+// feathered dark pool behind floating text (no hard edge): the shadow of an off-canvas shape
+function scrim(c, x, y, w, h, a = .55, blur = 55, r = 60) {
+  c.save(); c.shadowColor = `rgba(6,14,18,${a})`; c.shadowBlur = blur; c.shadowOffsetX = 6000; c.shadowOffsetY = 0;
+  c.fillStyle = '#000'; c.beginPath(); c.roundRect(x - 6000, y, w, h, r); c.fill(); c.restore();
+}
+function glow(c, on = true) { c.shadowColor = on ? 'rgba(0,0,0,.6)' : 'transparent'; c.shadowBlur = on ? 10 : 0; c.shadowOffsetX = 0; c.shadowOffsetY = on ? 2 : 0; }
+Panel.prototype.pill = function (x, y, w, h, label, id, fn) {
+  const hv = this.hover === id, c = this.ctx;
+  this.rr(x, y, w, h, h / 2, hv ? 'rgba(127,227,232,.38)' : 'rgba(255,255,255,.18)', hv ? GL : 'rgba(255,255,255,.8)', 3);
+  glow(c); this.vtext(label, x + w / 2, y + h / 2, 34, '#fff', 600, w - 30, 'center'); glow(c, false);
+  this.hits.push({ x, y, w, h, id, fn });
+};
+/* The stage remembers where the user was looking when a step began. Everything of that step is placed there and then stays put,
+   so text can be re-read. It re-anchors only at the start of a step, if the user has turned >~37° or walked >0.3 m. */
+const stage = { valid: false, ex: 0, ey: 1.6, ez: 0, fx: 0, fz: -1 };
+function gazeNow() {
+  camera.updateWorldMatrix(true, false);
+  camera.getWorldPosition(o3); camera.getWorldDirection(d3); d3.y = 0;
+  if (d3.lengthSq() < 1e-4) d3.set(0, 0, -1);
+  d3.normalize();
+}
+function restage(p) {
+  const s = p.stg, sc = A.big ? 1.25 : 1, dx = s.dx || 0;
+  p.mesh.scale.setScalar(sc);
+  const h = p.h * sc;
+  const x = stage.ex + stage.fx * s.dist - stage.fz * dx, z = stage.ez + stage.fz * s.dist + stage.fx * dx;
+  const y = stage.ey + s.dy + (s.edge === 'top' ? -h / 2 : s.edge === 'bottom' ? h / 2 : 0);
+  p.mesh.position.set(x, y, z); p.mesh.lookAt(stage.ex, y, stage.ez);
+}
+function stageSet(force) {
+  gazeNow();
+  const dot = stage.fx * d3.x + stage.fz * d3.z, mv = Math.hypot(o3.x - stage.ex, o3.z - stage.ez);
+  if (force || !stage.valid || dot < .8 || mv > .3) Object.assign(stage, { valid: true, ex: o3.x, ey: o3.y, ez: o3.z, fx: d3.x, fz: d3.z });
+  panels.forEach((p) => p.stg && restage(p));
+  hudPlace();
+}
+
 /* ---------- game state ---------- */
 let turn = 0, first = 0, tries = 0, order = [], reveal = false, showEn = false, busy = false, talking = false, score = 0;
 let bubbleFr = '', bubbleEn = '', msg = { t: '', c: COL.grey };
 
-/* street card (Figma: "You are located in the Rosemont neighbourhood…") */
-const streetCard = new Panel(1.25, 0.62, (p) => {
-  const W = p.cv.width, PAD = PANEL_PAD, by = PAD + p.tm(card.t, 42, 700, W - 100) + 36;
-  p.fit(by + 100 + PAD); const H = p.cv.height;
-  p.rr(4, 4, W - 8, H - 8, 36, 'rgba(244,251,252,.94)', COL.line);
-  p.ttext(card.t, 50, PAD, 42, COL.teal, 700, W - 100);
-  p.btn(50, by, 480, 100, card.b, 'enter', card.fn);
-}).place(-0.55, 1.25, -1.5);
+/* street / intro card: floating text that appears in front of you */
+const streetCard = new Panel(1.1, .5, (p) => {
+  const c = p.ctx, W = p.cv.width, M = 90, tw = W - 2 * M - 40;
+  const by = M + p.tm(card.t, 46, 700, tw) + 50;
+  p.fit(by + 96 + M);
+  scrim(c, 40, 40, W - 80, p.cv.height - 80, .6, 60, 70);
+  glow(c); p.ttext(card.t, W / 2, M, 46, '#fff', 700, tw, 'center'); glow(c, false);
+  p.pill(W / 2 - 250, by, 500, 96, card.b, 'enter', card.fn);
+}, 1100).soft({ edge: 'center', dy: 0, dist: 1.2 });
 
-/* barista speech bubble */
-const bubble = new Panel(1.3, 0.62, (p) => {
-  const W = p.cv.width, TOP = 30, showE = showEn || A.en;
-  const frB = TOP + p.tm(bubbleFr, 50, 700, W - 100), enB = showE ? frB + 6 + p.tm(bubbleEn, 36, 400, W - 100) : frB;
-  const bodyB = enB + 20; // 20px above the text and 20px below it, inside the bubble
-  p.fit(bodyB + 70, 'bottom');
-  const c = p.ctx;
-  c.fillStyle = 'rgba(255,255,255,.96)'; c.strokeStyle = COL.line; c.lineWidth = 4;
-  c.beginPath(); c.roundRect(10, 10, W - 20, bodyB - 10, 34); c.fill(); c.stroke();
-  c.beginPath(); c.moveTo(80, bodyB - 6); c.lineTo(46, bodyB + 62); c.lineTo(170, bodyB - 6); c.fill();
-  p.ttext(bubbleFr, 50, TOP, 50, COL.ink, 700, W - 100);
-  if (showE) p.ttext(bubbleEn, 50, frB + 6, 36, COL.grey, 400, W - 100);
-}).place(0.25, 2.1, -2.6);
+/* the speaker's line: floats just above eye level, close to the user, and stays until the next line */
+const bubble = new Panel(1.1, .34, (p) => {
+  const c = p.ctx, W = p.cv.width, M = 70, tw = W - 2 * M, showE = showEn || A.en;
+  const tag = mode === 'cafe' ? 'BARISTA' : 'INFORMATION DESK';
+  const frT = M + 50, fr = p.tm(bubbleFr, 60, 700, tw), enT = frT + fr + 16, en = showE ? p.tm(bubbleEn, 38, 400, tw) : 0;
+  p.fit((showE ? enT + en : frT + fr) + 50);
+  scrim(c, 30, 30, W - 60, p.cv.height - 50, .55, 55, 70);
+  glow(c); c.letterSpacing = '6px'; p.ttext(tag, W / 2 + 3, M - 6, 24, GL, 700, tw, 'center'); c.letterSpacing = '0px';
+  p.ttext(bubbleFr, W / 2, frT, 60, '#fff', 700, tw, 'center');
+  if (showE) p.ttext(bubbleEn, W / 2, enT, 38, GG, 400, tw, 'center');
+  glow(c, false);
+}, 1100).soft({ edge: 'bottom', dy: .09, dist: 1.1 });
 
 /* reply choices (Figma: "Use the microphone to reply…", speaker icons, mic, "Skip. Not sure.") */
 let order_ = [];
@@ -208,54 +258,77 @@ const useCloud = () => !!STT_URL && CAN_REC && !cloudOff;
    Set to false to use real recognition (cloud proxy or browser speech) instead. */
 const SIM_VOICE = true;
 const voiceOK = () => SIM_VOICE || useCloud() || (!!SR && !voiceOff);
-const choices = new Panel(1.5, 1.3, (p) => {
-  const c = p.ctx, W = p.cv.width, PAD = PANEL_PAD, MR = 60, MY = 750;
-  p.fit(MY + MR + PAD); const H = p.cv.height;
-  p.rr(4, 4, W - 8, H - 8, 40, 'rgba(244,251,252,.95)', COL.line);
-  p.ttext(voiceOK() ? 'Use the microphone to reply with the answer you believe best fits.' : 'Choose the reply you believe best fits. Point at it and pull the trigger.', 48, PAD, 38, COL.teal, 700, W - 96);
+/* the reply choices: plain floating rows under the speaker's line (no boxes) */
+const choices = new Panel(1.1, .32, (p) => {
+  const c = p.ctx, W = p.cv.width, M = 40, X0 = 70, tw = W - 2 * X0 - 130;
   order_ = order;
+  const hs = order.map((o) => Math.max(100, (A.en ? p.tm(o.fr, 44, 500, tw) + 8 + p.tm(o.en, 30, 400, tw) : p.tm(o.fr, 44, 500, tw)) + 44));
+  p.fit(M * 2 + hs.reduce((x, y) => x + y, 0));
+  scrim(c, 20, 20, W - 40, p.cv.height - 40, .55, 50, 60);
+  let y = M;
   order.forEach((o, i) => {
-    const y = 150 + i * 148, hv = p.hover === 'o' + i, hl = reveal && o.ok, on = sel === i;
-    p.rr(40, y, W - 80, 130, 22, on || hv ? COL.mint : '#fff', hl ? COL.ok : on || hv ? COL.teal : COL.line, hl || on ? 6 : 3);
-    speakerIcon(c, 70, y + 35, 60, p.hover === 's' + i ? COL.ok : COL.teal);
-    if (A.en) { const e = p.text(o.fr, 160, y + 12, 30, COL.ink, 500, W - 240); p.text(o.en, 160, e + 2, 24, COL.grey, 400, W - 240); }
-    else p.text(o.fr, 160, y + 20, 36, COL.ink, 500, W - 240);
-    p.hits.push({ x: 56, y: y + 10, w: 96, h: 110, id: 's' + i, fn: () => speak(o.fr, o.audio) });
-    p.hits.push({ x: 40, y, w: W - 80, h: 130, id: 'o' + i, fn: () => selectRow(i) });
+    const h = hs[i], hv = p.hover === 'o' + i, hl = reveal && o.ok, on = sel === i;
+    if (hl || on || hv) p.rr(X0 - 24, y + 4, W - 2 * X0 + 48, h - 8, 30, hl ? 'rgba(123,224,169,.24)' : on ? 'rgba(127,227,232,.26)' : 'rgba(255,255,255,.12)', hl ? GK : on ? GL : null, 3);
+    else if (i > 0) { c.fillStyle = 'rgba(255,255,255,.16)'; c.fillRect(X0, y, W - 2 * X0, 2); }
+    speakerIcon(c, X0, y + h / 2 - 30, 60, p.hover === 's' + i ? GK : GL);
+    glow(c);
+    if (A.en) { const e = p.ttext(o.fr, X0 + 100, y + 20, 44, '#fff', 500, tw); p.ttext(o.en, X0 + 100, e + 4, 30, GG, 400, tw); }
+    else p.vtext(o.fr, X0 + 100, y + h / 2, 44, '#fff', 500, tw);
+    glow(c, false);
+    p.hits.push({ x: X0 - 16, y, w: 104, h, id: 's' + i, fn: () => speak(o.fr, o.audio) });
+    p.hits.push({ x: X0 - 24, y, w: W - 2 * X0 + 48, h, id: 'o' + i, fn: () => selectRow(i) });
+    y += h;
   });
-  p.text(msg.t, 48, 600, 30, msg.c, 600, W - 96);
-  // microphone: grey and disabled until a reply is selected (Figma frame 17), teal when ready (frame 59)
-  const micOn = voiceOK() && sel >= 0 && !busy && !thinking, mh = p.hover === 'mic' && micOn, mc = listening ? COL.bad : micOn ? '#4A9798' : '#A5A5A5';
-  if (listening) { c.beginPath(); c.arc(106, MY, MR + 14, 0, Math.PI * 2); c.strokeStyle = 'rgba(192,72,59,.3)'; c.lineWidth = 8; c.stroke(); }
-  c.save(); c.shadowColor = 'rgba(0,0,0,.22)'; c.shadowBlur = 18; c.shadowOffsetY = 8;
-  c.beginPath(); c.arc(106, MY, MR, 0, Math.PI * 2);
-  const mg = c.createLinearGradient(106, MY - MR, 106, MY + MR); mg.addColorStop(0, '#F8FAFB'); mg.addColorStop(1, '#EEF1F4');
-  c.fillStyle = listening ? '#FBE3E0' : mh ? '#E6F8F8' : mg; c.fill(); c.restore();
-  c.beginPath(); c.arc(106, MY, MR, 0, Math.PI * 2); c.strokeStyle = listening ? COL.bad : micOn ? '#B9DADA' : '#A5A5A5'; c.lineWidth = 5; c.stroke();
-  micIcon(c, 106, MY, 100, mc);
-  const lab = !voiceOK() ? '' : thinking ? 'Checking…' : listening ? 'Listening… tap to stop' : micOn ? 'Tap to speak' : 'Select a reply first';
-  p.text(lab, 190, MY - 18, 30, listening ? COL.bad : micOn ? COL.teal : COL.grey, 600, W - 640);
-  p.hits.push({ x: 46, y: MY - MR, w: MR * 2, h: MR * 2, id: 'mic', fn: toggleMic });
-  // skip: plain grey text, no fill or stroke
-  const sx = W - 400, sy = MY - 45, sw = 360, sh = 90, sk = p.hover === 'skip';
-  p.vtext('Skip. Not Sure.', sx + sw / 2, sy + sh / 2, 34, sk ? '#4f5f65' : COL.grey, 600, sw - 20, 'center');
-  p.hits.push({ x: sx, y: sy, w: sw, h: sh, id: 'skip', fn: skip });
-}).place(1.0, 1.3, -1.05);
+}, 1100).soft({ edge: 'top', dy: -.06, dist: 1.1 });
+
+/* feedback / instruction line between the speaker's line and the replies; dissolves when its text changes */
+let fbShown = { t: '', c: COL.grey };
+const fbP = new Panel(1.1, .1, (p) => {
+  const c = p.ctx, W = p.cv.width, t = fbShown.t, tw = W - 200;
+  if (!t) return;
+  p.fit(p.tm(t, 32, 600, tw) + 50);
+  scrim(c, 60, 10, W - 120, p.cv.height - 20, .5, 28, 34);
+  glow(c); p.ttext(t, W / 2, 25, 32, lite(fbShown.c), 600, tw, 'center'); glow(c, false);
+}, 1100).soft({ edge: 'top', dy: .0, dist: 1.1 });
+
+/* microphone: locked to the bottom centre of the user's view */
+const micP = new Panel(.8, .34, (p) => {
+  const c = p.ctx, W = p.cv.width, cx = W / 2, MY = 110, MR = 74, vo = voiceOK();
+  scrim(c, 130, 15, W - 260, p.cv.height - 30, .5, 40, 80);
+  const micOn = vo && sel >= 0 && !busy && !thinking, mh = p.hover === 'mic' && micOn, mc = listening ? COL.bad : micOn ? '#2F8A8C' : '#9AA3A7';
+  if (vo) {
+    if (listening) { c.beginPath(); c.arc(cx, MY, MR + 16, 0, Math.PI * 2); c.strokeStyle = 'rgba(255,154,142,.55)'; c.lineWidth = 9; c.stroke(); }
+    c.save(); c.shadowColor = 'rgba(0,0,0,.35)'; c.shadowBlur = 20; c.shadowOffsetY = 8;
+    c.beginPath(); c.arc(cx, MY, MR, 0, Math.PI * 2);
+    c.fillStyle = listening ? '#FBE3E0' : micOn ? (mh ? '#DDF7F8' : '#F4FBFC') : 'rgba(225,230,232,.78)'; c.fill(); c.restore();
+    c.beginPath(); c.arc(cx, MY, MR, 0, Math.PI * 2); c.strokeStyle = listening ? COL.bad : micOn ? GL : 'rgba(255,255,255,.5)'; c.lineWidth = 5; c.stroke();
+    micIcon(c, cx, MY, 112, mc);
+    const lab = thinking ? 'Checking…' : listening ? 'Listening… tap to stop' : micOn ? 'Tap to speak' : 'Select a reply first';
+    glow(c); p.vtext(lab, cx, 232, 30, listening ? GR : micOn ? GL : GG, 600, W - 300, 'center'); glow(c, false);
+    p.hits.push({ x: cx - 90, y: MY - 90, w: 180, h: 180, id: 'mic', fn: toggleMic });
+  }
+  const sk = p.hover === 'skip';
+  glow(c); p.vtext('Skip. Not sure.', vo ? W - 120 : cx, MY, 28, sk ? '#fff' : GG, 600, 200, 'center'); glow(c, false);
+  p.hits.push({ x: vo ? W - 235 : cx - 120, y: MY - 50, w: 230, h: 100, id: 'skip', fn: skip });
+}, 800).soft();
+camera.add(micP.mesh); micP.mesh.position.set(0, -.43, -.8);
 
 /* results (Figma: score gauge, "Excellent job!") */
 const result = new Panel(1.1, 1.1, (p) => {
-  const W = p.cv.width, PAD = PANEL_PAD, cx = W / 2, cy = PAD + 20 + 200; // top of the gauge stroke sits 20px below the card edge
-  const bodyB = 444 + p.tm(res.body, 36, 400, W - 140), by = bodyB + 36;
-  p.fit(by + 100 + PAD); const c = p.ctx, H = p.cv.height;
-  p.rr(4, 4, W - 8, H - 8, 44, 'rgba(255,255,255,.97)', COL.line);
+  const W = p.cv.width, M = 80, cx = W / 2, cy = M + 40 + 200;
+  const bodyB = 444 + p.tm(res.body, 36, 400, W - 160), by = bodyB + 40;
+  p.fit(by + 96 + M); const c = p.ctx;
+  scrim(c, 30, 30, W - 60, p.cv.height - 60, .6, 70, 120);
   c.lineWidth = 40; c.lineCap = 'round';
-  c.strokeStyle = '#DDF2F3'; c.beginPath(); c.arc(cx, cy, 200, Math.PI, 2 * Math.PI); c.stroke();
-  c.strokeStyle = COL.teal; c.beginPath(); c.arc(cx, cy, 200, Math.PI, Math.PI + Math.PI * score / 10); c.stroke();
-  p.text(score.toFixed(1), cx, cy - 70, 90, COL.grey, 600, 400, 'center');
-  p.text(res.head, cx, 344, 70, COL.teal, 700, W - 100, 'center');
-  p.ttext(res.body, cx, 444, 36, COL.ink, 400, W - 140, 'center');
-  p.btn(cx - 200, by, 400, 100, res.btn, 'again', res.fn);
-}).place(0, 1.5, -1.4);
+  c.strokeStyle = 'rgba(255,255,255,.22)'; c.beginPath(); c.arc(cx, cy, 200, Math.PI, 2 * Math.PI); c.stroke();
+  c.strokeStyle = GL; c.beginPath(); c.arc(cx, cy, 200, Math.PI, Math.PI + Math.PI * Math.max(score, .01) / 10); c.stroke();
+  glow(c);
+  p.text(score.toFixed(1), cx, cy - 70, 90, '#fff', 600, 400, 'center');
+  p.text(res.head, cx, 344, 70, GL, 700, W - 100, 'center');
+  p.ttext(res.body, cx, 444, 36, '#fff', 400, W - 160, 'center');
+  glow(c, false);
+  p.pill(cx - 200, by, 400, 96, res.btn, 'again', res.fn);
+}).soft({ edge: 'center', dy: -.05, dist: 1.6 });
 
 /* ---------- speech: recorded audio first, browser voice as placeholder ---------- */
 const synth = window.speechSynthesis;
@@ -322,7 +395,7 @@ function stopListening() {
   listening = false; thinking = false; sttTok++;
   if (cloud) { const c = cloud; cloud = null; c.cancelled = true; cloudClean(c); try { if (c.rec.state !== 'inactive') c.rec.stop(); } catch (e) {} }
   if (srec) { const r = srec; srec = null; r.onresult = r.onerror = r.onend = null; try { r.abort(); } catch (e) {} }
-  if (was && choices.mesh.visible) choices.render();
+  if (was) rUI();
 }
 function micError(code) {
   if (code === 'not-allowed' || code === 'service-not-allowed') return 'The microphone is blocked. Allow the mic for this site, or point and pull the trigger on a reply.';
@@ -337,18 +410,18 @@ function heardIt(alts) {
   if (!o) return;
   const sc = Math.max(...alts.map((x) => sim(x, o.fr)));
   if (sc >= .6) pick(o, alts[0]);
-  else { msg = { t: `I heard “${alts[0]}”. Try saying: “${o.fr}”`, c: COL.bad }; choices.render(); }
+  else { msg = { t: `I heard “${alts[0]}”. Try saying: “${o.fr}”`, c: COL.bad }; rUI(); }
 }
 function toggleMic() {
   if (busy || paused || modal || thinking) return;
   if (!voiceOK()) return;
-  if (sel < 0) { msg = { t: 'Select a reply first, then tap the microphone.', c: COL.grey }; return choices.render(); }
-  if (listening) { if (cloud && !cloud.finishing) return cloudFinish(); stopListening(); msg = { t: '', c: COL.grey }; return choices.render(); }
-  if (talking) { msg = { t: 'Wait until the barista has finished, then tap the mic.', c: COL.grey }; return choices.render(); }
+  if (sel < 0) { msg = { t: 'Select a reply first, then tap the microphone.', c: COL.grey }; return rUI(); }
+  if (listening) { if (cloud && !cloud.finishing) return cloudFinish(); stopListening(); msg = { t: '', c: COL.grey }; return rUI(); }
+  if (talking) { msg = { t: 'Wait until the barista has finished, then tap the mic.', c: COL.grey }; return rUI(); }
   try { synth && synth.cancel(); } catch (e) {}
   if (SIM_VOICE) {
     const o = order[sel];
-    listening = true; msg = { t: 'Listening… say your reply in French.', c: COL.teal }; choices.render();
+    listening = true; msg = { t: 'Listening… say your reply in French.', c: COL.teal }; rUI();
     clearTimeout(recTimer);
     recTimer = setTimeout(() => { if (!listening) return; listening = false; pick(o, o.fr); }, 2400);
     return;
@@ -363,15 +436,15 @@ function toggleMic() {
     stopListening();
     if (alts.length) heardIt(alts);
   };
-  r.onerror = (e) => { if (srec !== r) return; got = true; stopListening(); if (e.error !== 'no-speech' && e.error !== 'aborted') voiceOff = true; msg = { t: micError(e.error), c: e.error === 'no-speech' ? COL.grey : COL.bad }; choices.render(); };
-  r.onend = () => { if (srec !== r) return; stopListening(); if (!got) { msg = { t: micError('no-speech'), c: COL.grey }; choices.render(); } };
+  r.onerror = (e) => { if (srec !== r) return; got = true; stopListening(); if (e.error !== 'no-speech' && e.error !== 'aborted') voiceOff = true; msg = { t: micError(e.error), c: e.error === 'no-speech' ? COL.grey : COL.bad }; rUI(); };
+  r.onend = () => { if (srec !== r) return; stopListening(); if (!got) { msg = { t: micError('no-speech'), c: COL.grey }; rUI(); } };
   try {
     r.start();
     listening = true;
     msg = { t: 'Listening… say your reply in French.', c: COL.teal };
     recTimer = setTimeout(() => { if (srec === r) { try { r.stop(); } catch (e) {} } }, 9000);
   } catch (e) { srec = null; voiceOff = true; msg = { t: micError('other'), c: COL.bad }; }
-  choices.render();
+  rUI();
 }
 
 /* ---------- cloud speech-to-text: record the mic, send to the proxy, match the transcript ---------- */
@@ -403,7 +476,7 @@ function cloudFinish() {
 }
 async function cloudStart() {
   const my = ++sttTok;
-  listening = true; msg = { t: 'Listening… say your reply in French.', c: COL.teal }; choices.render();
+  listening = true; msg = { t: 'Listening… say your reply in French.', c: COL.teal }; rUI();
   try {
     const stream = await getMic();
     if (my !== sttTok) return;
@@ -414,8 +487,8 @@ async function cloudStart() {
     rec.onstop = async () => {
       if (c.cancelled || cloud !== c) return;
       cloud = null; cloudClean(c); listening = false;
-      if (!c.heard || !c.chunks.length) { msg = { t: micError('no-speech'), c: COL.grey }; return choices.render(); }
-      thinking = true; msg = { t: 'Checking what you said…', c: COL.teal }; choices.render();
+      if (!c.heard || !c.chunks.length) { msg = { t: micError('no-speech'), c: COL.grey }; return rUI(); }
+      thinking = true; msg = { t: 'Checking what you said…', c: COL.teal }; rUI();
       const tok = ++sttTok;
       try {
         const res = await fetch(STT_URL, { method: 'POST', headers: { 'Content-Type': c.mime.split(';')[0] }, body: new Blob(c.chunks, { type: c.mime }) });
@@ -424,13 +497,13 @@ async function cloudStart() {
         if (tok !== sttTok) return;
         thinking = false; sttFails = 0;
         const t = (j.text || '').trim();
-        if (!t) { msg = { t: micError('no-speech'), c: COL.grey }; return choices.render(); }
+        if (!t) { msg = { t: micError('no-speech'), c: COL.grey }; return rUI(); }
         heardIt([t]);
       } catch (e) {
         if (tok !== sttTok) return;
         thinking = false;
         if (++sttFails >= 2) cloudOff = true; // fall back to point-and-trigger after two failures
-        msg = { t: micError('network'), c: COL.bad }; choices.render();
+        msg = { t: micError('network'), c: COL.bad }; rUI();
       }
     };
     // voice-activity detection: stop ~1.1 s after you finish speaking (or after 9 s)
@@ -452,25 +525,57 @@ async function cloudStart() {
   } catch (e) {
     if (my !== sttTok) return;
     listening = false; cloudOff = true;
-    msg = { t: micError(e && e.name === 'NotFoundError' ? 'audio-capture' : 'not-allowed'), c: COL.bad }; choices.render();
+    msg = { t: micError(e && e.name === 'NotFoundError' ? 'audio-capture' : 'not-allowed'), c: COL.bad }; rUI();
   }
 }
 
 /* ---------- dialogue flow ---------- */
 const shuffle = (a) => a.map((v) => [Math.random(), v]).sort((x, y) => x[0] - y[0]).map((x) => x[1]);
-const renderAll = () => { bubble.render(); choices.render(); };
+let lineKey = '', lineTm = 0, fbTm = 0, repliesOn = false;
+const lineK = () => bubbleFr + '|' + bubbleEn + '|' + (showEn || A.en) + '|' + mode;
+function syncLine() { // the speaker's line dissolves out and the new one dissolves in
+  const k = lineK(); if (k === lineKey) return; lineKey = k;
+  clearTimeout(lineTm);
+  if (bubble.fa > .02) { bubble.hide(); lineTm = setTimeout(() => { bubble.render(); bubble.show(0); }, 330); }
+  else { bubble.render(); bubble.show(0); }
+}
+function syncFb() {
+  if (fbShown.t === msg.t && fbShown.c === msg.c) return;
+  fbShown = { t: msg.t, c: msg.c }; clearTimeout(fbTm);
+  const go = () => { fbP.render(); if (fbShown.t && repliesOn) fbP.show(0); };
+  if (fbP.fa > .02) { fbP.hide(); fbTm = setTimeout(go, 280); } else go();
+}
+const rUI = () => { syncFb(); if (choices.ft) choices.render(); if (micP.ft) micP.render(); };
+const renderAll = () => { syncLine(); rUI(); };
+const talkP = () => [bubble, choices, fbP, micP];
+function hideTalk(snap) {
+  clearTimeout(lineTm); clearTimeout(fbTm);
+  talkP().forEach((p) => (snap ? p.snap() : p.hide()));
+  lineKey = ''; fbShown = { t: '', c: COL.grey }; repliesOn = false;
+}
+function showReplies() { // the replies, feedback line and mic appear once the speaker has finished
+  repliesOn = true;
+  choices.render(); choices.show(.1); micP.render(); micP.show(.35);
+  fbShown = { t: '', c: COL.grey }; syncFb();
+}
 
 function startTurn() {
   const t = LINES[turn];
   stopListening(); sel = -1;
-  tries = 0; reveal = false; showEn = false; busy = false; msg = { t: '', c: COL.grey };
+  tries = 0; reveal = false; showEn = false; busy = false;
+  msg = { t: voiceOK() ? 'Use the microphone to reply with the answer you believe best fits.' : 'Choose the reply you believe best fits. Point at it and pull the trigger.', c: COL.teal };
   order = shuffle(t.options.map((o, i) => ({ ...o, audio: `audio/${ap()}_opt${i + 1}.mp3` })));
   bubbleFr = t.fr; bubbleEn = t.en; talking = true;
   cupG.visible = mode === 'cafe' && turn === LINES.length - 1;
-  bubble.mesh.visible = choices.mesh.visible = true;
-  hudPlace(); hud.mesh.visible = hudOn();
-  renderAll();
-  speak(t.fr, `audio/${ap()}_barista.mp3`, () => { talking = false; });
+  hud.mesh.visible = hudOn();
+  const old = talkP().some((p) => p.fa > .02);
+  hideTalk();
+  const go = () => {
+    stageSet(false);
+    syncLine();
+    speak(t.fr, `audio/${ap()}_barista.mp3`, () => { talking = false; showReplies(); });
+  };
+  if (old) later(450, go); else go();
 }
 function selectRow(i) {
   if (busy) return;
@@ -479,7 +584,7 @@ function selectRow(i) {
   stopListening();
   sel = i;
   msg = { t: 'Tap the microphone and say your reply in French.', c: COL.teal };
-  choices.render();
+  rUI();
 }
 function pick(o, heard) {
   if (busy) return;
@@ -489,7 +594,7 @@ function pick(o, heard) {
     busy = true;
     if (tries === 0 && !reveal) first++;
     msg = { t: '✓ Très bien! ' + (t.note || ''), c: COL.ok };
-    choices.render();
+    rUI();
     speak(o.fr, o.audio, () => later(900, next));
   } else wrong(heard ? `I heard “${heard}”. Not quite. Tap a speaker icon to hear a reply, then try again.` : 'Not quite. Tap a speaker icon to hear a reply, then try again.');
 }
@@ -500,7 +605,7 @@ function wrong(text) {
   bubbleFr = 'Pardon? Je n’ai pas compris.'; bubbleEn = 'Sorry? I didn’t understand.';
   msg = { t: text, c: COL.bad };
   renderAll();
-  speak(bubbleFr, 'audio/pardon.mp3', () => { talking = false; bubbleFr = t.fr; bubbleEn = t.en; bubble.render(); });
+  speak(bubbleFr, 'audio/pardon.mp3', () => { talking = false; bubbleFr = t.fr; bubbleEn = t.en; syncLine(); });
 }
 function skip() {
   if (busy) return;
@@ -520,7 +625,7 @@ function next() {
   score = +(first / LINES.length * 10).toFixed(1);
   res = { head: score >= 8 ? 'Excellent job!' : score >= 5 ? 'Bon travail!' : 'Keep practicing!', body: `You answered ${first} of ${LINES.length} replies correctly on the first try.`, btn: 'Play again', fn: playAgain };
   cupLive = true; cupMsg = 'Votre cortado est prêt! Point at it and pull the trigger (or click) to grab it.';
-  bubble.mesh.visible = choices.mesh.visible = false; cupHint.mesh.visible = true; cupHint.render();
+  hideTalk(); stageSet(false); cupHint.render(); cupHint.show(.7);
 }
 function goCafe() { transition(() => { resetCup(); resetPay(); loadScript(CAFE); mode = 'cafe'; setScene('cafe'); turn = 0; first = 0; startTurn(); }); }
 function playAgain() { goCafe(); }
@@ -536,9 +641,7 @@ function setScene(name) {
   desk.visible = on('deskintro', 'desk', 'level');
   globe.visible = on('load', 'signin', 'welcome', 'dash');
   grid.visible = dash.mesh.visible = on('dash');
-  streetCard.mesh.visible = on('street', 'deskintro');
-  bubble.mesh.visible = choices.mesh.visible = on('cafe', 'desk');
-  result.mesh.visible = on('result', 'level');
+  [streetCard, cupHint, payHint, result].forEach((p) => p.snap()); hideTalk(true);
   loading.mesh.visible = on('load', 'tip');
   sign.mesh.visible = on('signin', 'welcome');
   scene.background = new THREE.Color(on('street', 'tip') ? '#a9d6f5' : on('dash') ? '#dfe5e9' : on('desk', 'deskintro', 'level') ? '#2a2f36' : on('cafe', 'result') ? '#1b1512' : '#271f33');
@@ -548,7 +651,9 @@ function setScene(name) {
   gHemi.visible = sun.visible = !on('desk', 'deskintro', 'level'); // the airport has its own lighting
   renderer.toneMapping = on('cafe', 'result', 'desk', 'deskintro', 'level') ? THREE.ACESFilmicToneMapping : THREE.NoToneMapping;
   hud.mesh.visible = hudOn(); hudPlace(); hud.render();
-  [loading, sign, dash, streetCard].forEach((p) => p.mesh.visible && p.render());
+  [loading, sign, dash].forEach((p) => p.mesh.visible && p.render());
+  if (on('street', 'deskintro')) { stageSet(true); streetCard.render(); streetCard.show(1.1); }
+  if (on('result', 'level')) { stageSet(true); result.render(); result.show(.9); }
 }
 
 /* Rosemont street (stylized stand-in; drop a 360 photo in assets/rosemont-360.jpg to replace it) */
@@ -899,7 +1004,7 @@ function beginAssess() { mode = 'assess'; loadScript(ASSESS); turn = 0; first = 
 function finishAssess() {
   score = +(4 + 6 * first / LINES.length).toFixed(1);
   res = { head: score >= 8 ? 'Excellent job!' : score >= 6 ? 'Bon travail!' : 'Good start!', body: `You have ${score >= 8 ? 'strong' : 'developing'} speaking skills. Based on your replies you will practice at a ${score} difficulty level. You can change this anytime in settings.`, btn: 'Begin module', fn: beginModule };
-  setScene('level'); result.render();
+  transition(() => setScene('level'));
 }
 function beginModule() {
   transition(() => {
@@ -920,22 +1025,22 @@ const cupHandle = new THREE.Mesh(new THREE.TorusGeometry(.016, .004, 6, 12), cup
 const coffee = new THREE.Mesh(new THREE.CylinderGeometry(.033, .033, .004, 20), M('#5a3a22')); coffee.position.y = .066; cupG.add(coffee);
 const cupGrab = new THREE.Mesh(new THREE.SphereGeometry(.14, 8, 6), new THREE.MeshBasicMaterial({ visible: false })); cupGrab.position.y = .05; cupG.add(cupGrab);
 room.steam(cupG, 0, .085, 0, 1);
-const cupHint = new Panel(1.1, .34, (p) => {
-  const W = p.cv.width, PAD = PANEL_PAD;
-  p.fit(PAD + p.tm(cupMsg, 46, 700, W - 80) + PAD); const H = p.cv.height;
-  p.rr(4, 4, W - 8, H - 8, 30, 'rgba(244,251,252,.95)', COL.line);
-  p.ttext(cupMsg, W / 2, PAD, 46, COL.teal, 700, W - 80, 'center');
-}).place(.55, 1.6, -1.9);
+const cupHint = new Panel(1.1, .2, (p) => {
+  const c = p.ctx, W = p.cv.width, M = 60;
+  p.fit(M * 2 + p.tm(cupMsg, 46, 700, W - 160));
+  scrim(c, 30, 20, W - 60, p.cv.height - 40, .55, 50, 70);
+  glow(c); p.ttext(cupMsg, W / 2, M, 46, GL, 700, W - 160, 'center'); glow(c, false);
+}, 1100).soft({ edge: 'top', dy: .1, dist: 1.0 });
 function resetCup() {
   cupLive = false; cupHeld = null; cupG.visible = false; saucer.visible = true;
-  cupG.position.set(.55, 1.052, -1.98); cupG.scale.setScalar(1.3); cupHint.mesh.visible = false;
+  cupG.position.set(.55, 1.052, -1.98); cupG.scale.setScalar(1.3); cupHint.snap();
 }
 function grabCup(c) {
   if (!cupLive) return;
   cupLive = false; cupHeld = c || 'mouse'; cupG.scale.setScalar(1); saucer.visible = false;
   try { c.userData.src.gamepad.hapticActuators[0].pulse(.7, 90); } catch (e) {}
-  cupMsg = 'Santé! Bon appétit!'; cupHint.render();
-  later(2600, () => { cupHint.mesh.visible = false; setScene('result'); result.render(); });
+  cupMsg = 'Santé! Bon appétit!'; cupHint.hide(); setTimeout(() => { cupHint.render(); cupHint.show(0); }, 420);
+  later(2800, () => { cupHint.hide(); transition(() => setScene('result')); });
 }
 
 /* ---------- accessibility settings (remembered on this device) ---------- */
@@ -1002,12 +1107,10 @@ function frontOf(mesh, dist, dy = 0) {
   mesh.lookAt(o3.x, mesh.position.y, o3.z);
 }
 function hudPlace() {
-  if ((cur === 'cafe' || cur === 'desk') && choices.mesh.visible) { // dock on the right-hand edge of the reply panel
-    const m = choices.mesh, k = m.scale.x;
-    hud.mesh.quaternion.copy(m.quaternion);
-    hud.mesh.position.copy(m.position)
-      .addScaledVector(d3.set(1, 0, 0).applyQuaternion(m.quaternion), .75 * k + .12)
-      .addScaledVector(w3.set(0, 1, 0).applyQuaternion(m.quaternion), m.geometry.parameters.height / 2 * k - .2 - .02);
+  if ((cur === 'cafe' || cur === 'desk') && stage.valid) { // sits just right of the dialogue, in the same place all step
+    const dx = .68 * (A.big ? 1.25 : 1), d = 1.1, y = stage.ey + .02;
+    hud.mesh.position.set(stage.ex + stage.fx * d - stage.fz * dx, y, stage.ez + stage.fz * d + stage.fx * dx);
+    hud.mesh.lookAt(stage.ex, y, stage.ez);
     return;
   }
   camera.updateWorldMatrix(true, false);
@@ -1074,7 +1177,7 @@ function ovPlace() {
 }
 function modalRestore() {
   ov.visible = false; ovA = ovTarget = 0; ovDome.material.opacity = 0;
-  ovPanels.forEach((q) => { q.mesh.material.opacity = 1; }); ovPanels = [];
+  ovPanels.forEach((q) => { q.mod = 1; q.applyOpacity(); }); ovPanels = [];
   pauseP.mesh.visible = a11yP.mesh.visible = false;
   [pauseP, a11yP].forEach((q) => { q.mesh.material.opacity = 1; });
 }
@@ -1110,7 +1213,8 @@ function applyA() {
   panels.forEach((p) => { if (!p.noScale) p.mesh.scale.setScalar(A.big ? 1.25 : 1); });
   rig.position.y = A.seat ? .4 : 0;
   hudPlace();
-  [bubble, choices, a11yP, pauseP].forEach((p) => p.mesh.visible && p.render());
+  if (bubble.ft) syncLine();
+  [bubble, choices, fbP, micP, a11yP, pauseP].forEach((p) => p.mesh.visible && p.render());
   try { localStorage.setItem('fvr-a11y', JSON.stringify(A)); } catch (e) {}
 }
 
@@ -1119,15 +1223,14 @@ const PAY_Z = -1.4;
 const v3 = new THREE.Vector3(), w3 = new THREE.Vector3();
 let payOn = false, payDone = true, payHolder = null, payNear = 0, mouseTerm = null, actx = null;
 const card3d = room.makeCard();
-const payHint = new Panel(.8, .3, (p) => {
-  const W = p.cv.width, PAD = PANEL_PAD, t1 = 'Tap your card on the terminal to pay.', t2 = 'You can also point at the terminal and pull the trigger.';
-  const b1 = PAD + p.tm(t1, 40, 700, W - 80), t2top = b1 + 12, b2 = t2top + p.tm(t2, 28, 400, W - 80), by = b2 + 24;
-  p.fit(by + 76 + PAD); const H = p.cv.height;
-  p.rr(4, 4, W - 8, H - 8, 34, 'rgba(244,251,252,.96)', COL.line);
-  p.ttext(t1, 40, PAD, 40, COL.teal, 700, W - 80);
-  p.ttext(t2, 40, t2top, 28, COL.grey, 400, W - 80);
-  p.btn(W - 280, by, 240, 76, 'Skip', 'skiptap', tapDone);
-});
+const payHint = new Panel(1.0, .3, (p) => {
+  const c = p.ctx, W = p.cv.width, M = 50, t1 = 'Tap your card on the terminal to pay.', t2 = 'You can also point at the terminal and pull the trigger.';
+  const b1 = M + p.tm(t1, 40, 700, W - 140), t2top = b1 + 14, b2 = t2top + p.tm(t2, 28, 400, W - 140), by = b2 + 34;
+  p.fit(by + 72 + M);
+  scrim(c, 30, 20, W - 60, p.cv.height - 40, .55, 50, 70);
+  glow(c); p.ttext(t1, W / 2, M, 40, '#fff', 700, W - 140, 'center'); p.ttext(t2, W / 2, t2top, 28, GG, 400, W - 140, 'center'); glow(c, false);
+  p.pill(W / 2 - 110, by, 220, 72, 'Skip', 'skiptap', tapDone);
+}, 1000).soft({ edge: 'top', dy: -.02, dist: 1.0 });
 function beep() {
   try {
     actx = actx || new (window.AudioContext || window.webkitAudioContext)();
@@ -1144,14 +1247,13 @@ function pickHand() {
 function startPayment(p) {
   busy = true; payDone = false;
   transition(() => {
-    rig.position.z = PAY_Z; hudPlace();
-    choices.mesh.visible = false;
+    rig.position.z = PAY_Z; hideTalk(true);
     room.terminal.setState('pay');
     payHolder = pickHand(); payNear = 0; payOn = true;
     if (payHolder === 'mouse') { camera.add(card3d); card3d.position.set(.2, -.2, -.55); card3d.rotation.set(1.0, 0, -.15); card3d.scale.setScalar(1.5); }
     else { payHolder.add(card3d); card3d.position.set(0, -.012, -.1); card3d.rotation.set(0, 0, 0); card3d.scale.setScalar(1); }
-    payHint.mesh.position.set(.3, 1.5, -2.05); payHint.mesh.lookAt(0, 1.5, PAY_Z); payHint.mesh.visible = true; payHint.render();
-    bubbleFr = p.fr; bubbleEn = p.en; showEn = true; talking = true; bubble.render();
+    stageSet(true); payHint.render(); payHint.show(.9);
+    bubbleFr = p.fr; bubbleEn = p.en; showEn = true; talking = true; syncLine();
     speak(p.fr, 'audio/pay.mp3', () => { talking = false; });
   });
 }
@@ -1160,21 +1262,21 @@ function tapDone() {
   payDone = true;
   room.terminal.setState('ok'); beep();
   try { if (payHolder && payHolder !== 'mouse') payHolder.userData.src.gamepad.hapticActuators[0].pulse(.8, 120); } catch (e) {}
-  payHint.mesh.visible = false;
-  bubbleFr = 'Parfait, c’est approuvé. Merci!'; bubbleEn = 'Perfect, it’s approved. Thank you!'; showEn = true; talking = true; bubble.render();
+  payHint.hide();
+  bubbleFr = 'Parfait, c’est approuvé. Merci!'; bubbleEn = 'Perfect, it’s approved. Thank you!'; showEn = true; talking = true; syncLine();
   speak(bubbleFr, 'audio/pay_ok.mp3', () => { talking = false; });
   later(2800, endPayment);
 }
 function endPayment() {
   transition(() => {
-    rig.position.z = 0; hudPlace(); card3d.removeFromParent(); payOn = false; payHolder = null;
+    rig.position.z = 0; payHint.snap(); hideTalk(true); card3d.removeFromParent(); payOn = false; payHolder = null;
     room.terminal.setState('idle'); room.terminal.ring.visible = false;
     startTurn();
   });
 }
 function resetPay() {
   payOn = false; payDone = true; payHolder = null; payNear = 0;
-  rig.position.z = 0; card3d.removeFromParent(); payHint.mesh.visible = false;
+  rig.position.z = 0; card3d.removeFromParent(); payHint.snap();
   room.terminal.setState('idle'); room.terminal.ring.visible = false;
 }
 
@@ -1188,7 +1290,7 @@ function transition(fn) { if (A.calm) return fn(); if (!fadeT) fadeT = { t: 0, f
 const ray = new THREE.Raycaster();
 const tmpM = new THREE.Matrix4(), o3 = new THREE.Vector3(), d3 = new THREE.Vector3();
 const shown = (o) => { for (; o; o = o.parent) if (!o.visible) return false; return true; };
-const intersect = () => ray.intersectObjects(panels.filter((p) => shown(p.mesh) && (!modal || p === hud || p === pauseP || p === a11yP)).map((p) => p.mesh), false)[0];
+const intersect = () => ray.intersectObjects(panels.filter((p) => shown(p.mesh) && (!p.f || (p.ft > 0 && p.fa > .3)) && (!modal || p === hud || p === pauseP || p === a11yP)).map((p) => p.mesh), false)[0];
 const clickHit = (h) => { const p = h.object.userData.panel; if (modal && p !== hud && p !== pauseP && p !== a11yP) return; const b = p.at(h.uv); if (b) b.fn(); };
 
 let gCtl = null, mouseGlobe = null;
@@ -1244,12 +1346,18 @@ boot();
 
 renderer.setAnimationLoop(() => {
   const rawDt = Math.min(clock.getDelta(), .1), dt = rawDt * (paused ? 0 : 1), t = clock.elapsedTime, talkNow = talking && !paused;
+  for (const p of panels) if (p.f) { // soft dissolve of floating panels
+    if (p.fd > 0) p.fd -= rawDt;
+    else if (p.fa !== p.ft) p.fa = p.ft > p.fa ? Math.min(1, p.fa + rawDt / .8) : Math.max(0, p.fa - rawDt / .5);
+    p.applyOpacity();
+    if (p.fa === 0 && p.ft === 0 && p.mesh.visible) p.mesh.visible = false;
+  }
   if (ov.visible && ovA !== ovTarget) { // soft dissolve of the dimmed pause / settings screen
     ovA = ovTarget > ovA ? Math.min(1, ovA + rawDt / .5) : Math.max(0, ovA - rawDt / .4);
     const e = ovA * ovA * (3 - 2 * ovA);
     ovDome.material.opacity = OV_DARK * e;
     [pauseP, a11yP].forEach((q) => { q.mesh.material.opacity = e; });
-    ovPanels.forEach((q) => { q.mesh.material.opacity = 1 - e; });
+    ovPanels.forEach((q) => { q.mod = 1 - e; q.applyOpacity(); });
     if (ovA === 0 && ovTarget === 0) modalRestore();
   }
   if (sign.mesh.visible) { // dissolve between the two sign-in frames
@@ -1326,7 +1434,7 @@ renderer.setAnimationLoop(() => {
   if (fadeT) {
     fadeT.t += dt;
     const a = fadeT.t < .4 ? fadeT.t / .4 : 1 - (fadeT.t - .4) / .4;
-    fade.material.opacity = Math.max(0, Math.min(1, a));
+    fade.material.opacity = ease(Math.max(0, Math.min(1, a)));
     if (!fadeT.done && fadeT.t >= .4) { fadeT.fn(); fadeT.done = true; }
     if (fadeT.t >= .8) { fade.material.opacity = 0; fadeT = null; }
   }
