@@ -1,0 +1,317 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Quest Mic Test</title>
+<!--
+  Diagnostic page for voice replies on the Meta Quest Browser.
+  Open it on the headset (same HTTPS host as the game), run each section, then press "Copy report".
+  Nothing here is sent to our servers. Section 2 uses the browser's own recogniser, which on
+  Chrome sends audio to Google. Section 5 downloads a Whisper model from Hugging Face once and
+  then runs fully on the device.
+-->
+<style>
+  :root { --bg: #F4FBFC; --card: #fff; --ink: #1E2F35; --muted: #4F666D; --teal: #136F74; --line: #BFEDEF; --ok: #1B7A3A; --bad: #B3261E; --warn: #8A5A00; }
+  @media (prefers-color-scheme: dark) { :root { --bg: #0F1A1D; --card: #172529; --ink: #E7F2F3; --muted: #A9BFC3; --teal: #6FD3D8; --line: #2C4A52; --ok: #7FD99A; --bad: #FF9A92; --warn: #F2C46B; } }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font: 20px/1.45 system-ui, 'Segoe UI', Arial, sans-serif; }
+  main { max-width: 920px; margin: 0 auto; padding: 24px 16px 64px; }
+  h1 { font-size: 30px; margin: 0 0 4px; }
+  h2 { font-size: 23px; margin: 0 0 8px; color: var(--teal); }
+  p { margin: 6px 0; }
+  .muted { color: var(--muted); }
+  section { background: var(--card); border: 1px solid var(--line); border-radius: 16px; padding: 18px; margin-top: 18px; }
+  button, select { font: inherit; min-height: 52px; padding: 8px 18px; border-radius: 12px; border: 2px solid var(--teal); background: var(--card); color: var(--teal); font-weight: 600; cursor: pointer; margin: 6px 8px 6px 0; }
+  button.primary { background: var(--teal); color: var(--bg); }
+  button:disabled { opacity: .45; cursor: not-allowed; }
+  button:focus-visible, select:focus-visible { outline: 3px solid var(--teal); outline-offset: 3px; }
+  table { border-collapse: collapse; width: 100%; }
+  td { padding: 6px 4px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  td:first-child { width: 46%; color: var(--muted); }
+  .ok { color: var(--ok); font-weight: 700; } .bad { color: var(--bad); font-weight: 700; } .warn { color: var(--warn); font-weight: 700; }
+  .out { white-space: pre-wrap; font-family: ui-monospace, Menlo, monospace; font-size: 17px; background: var(--bg); border-radius: 10px; padding: 10px; min-height: 2.6em; margin-top: 8px; }
+  meter { width: 100%; height: 22px; }
+  textarea { width: 100%; min-height: 220px; font: 15px ui-monospace, Menlo, monospace; background: var(--bg); color: var(--ink); border: 1px solid var(--line); border-radius: 10px; padding: 10px; }
+  label { margin-right: 6px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Quest voice test</h1>
+  <p class="muted">Run each section on the headset, top to bottom, then copy the report at the end and send it back.</p>
+
+  <section aria-labelledby="h-env">
+    <h2 id="h-env">1. What this browser supports</h2>
+    <table><tbody id="env"></tbody></table>
+  </section>
+
+  <section aria-labelledby="h-sr">
+    <h2 id="h-sr">2. Built-in speech recognition (fr-CA)</h2>
+    <p class="muted">This is what the game uses today. Press start and say a French phrase.</p>
+    <button id="srStart" class="primary">Start built-in recognition</button>
+    <div class="out" id="srOut" role="status" aria-live="polite"></div>
+  </section>
+
+  <section aria-labelledby="h-od">
+    <h2 id="h-od">3. On-device built-in recognition (option A)</h2>
+    <p class="muted">Newer Chrome can download a French model to the device. Checks whether this browser offers that.</p>
+    <button id="odCheck">Check availability</button>
+    <button id="odInstall" disabled>Try to install fr-CA</button>
+    <div class="out" id="odOut" role="status" aria-live="polite"></div>
+  </section>
+
+  <section aria-labelledby="h-mic">
+    <h2 id="h-mic">4. Microphone</h2>
+    <button id="micBtn" class="primary">Allow microphone</button>
+    <p><label for="lvl">Input level</label></p>
+    <meter id="lvl" min="0" max="1" value="0"></meter>
+    <div class="out" id="micOut" role="status" aria-live="polite"></div>
+  </section>
+
+  <section aria-labelledby="h-wh">
+    <h2 id="h-wh">5. Whisper on the device (option B)</h2>
+    <p class="muted">Downloads the model once (then it's cached), records you, and transcribes on the headset. Try tiny first.</p>
+    <p>
+      <label for="whModel">Model</label>
+      <select id="whModel">
+        <option value="onnx-community/whisper-tiny">whisper-tiny (~40 MB at q8)</option>
+        <option value="onnx-community/whisper-base">whisper-base (~77 MB at q8)</option>
+      </select>
+      <label for="whDevice">Runs on</label>
+      <select id="whDevice"><option value="webgpu">WebGPU</option><option value="wasm">WASM (CPU)</option></select>
+      <label for="whDtype">Precision</label>
+      <select id="whDtype"><option value="q8">q8 (smallest)</option><option value="fp16">fp16</option><option value="fp32">fp32 (largest)</option></select>
+    </p>
+    <button id="whLoad" class="primary">Load model</button>
+    <button id="whRec" disabled>Record (tap again to stop)</button>
+    <p>
+      <label for="target">Phrase you'll say</label>
+      <select id="target"></select>
+    </p>
+    <p><label><input type="checkbox" id="prime" checked> Also test priming (same clip transcribed plain, primed with this phrase, and primed with a wrong phrase)</label></p>
+    <div class="out" id="whOut" role="status" aria-live="polite"></div>
+  </section>
+
+  <section aria-labelledby="h-rep">
+    <h2 id="h-rep">6. Report</h2>
+    <button id="copy" class="primary">Copy report</button>
+    <textarea id="report" readonly aria-label="Test report"></textarea>
+  </section>
+</main>
+
+<script type="module">
+import { LINES } from './dialogue.js';
+
+const $ = (id) => document.getElementById(id);
+const log = {}; // section -> lines, used for the report
+function out(sec, el, line, cls) {
+  (log[sec] ||= []).push(line);
+  const d = document.createElement('div');
+  d.textContent = line;
+  if (cls) d.className = cls;
+  $(el).appendChild(d);
+  report();
+}
+function report() {
+  const env = [...$('env').rows].map((r) => `  ${r.cells[0].textContent}: ${r.cells[1].textContent}`).join('\n');
+  $('report').value = `Quest voice test, ${new Date().toISOString()}\n\n[1. Support]\n${env}\n` +
+    Object.entries(log).map(([k, v]) => `\n[${k}]\n` + v.map((x) => '  ' + x).join('\n')).join('\n');
+}
+
+/* ---------- 1. environment ---------- */
+const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+function row(k, v, cls) {
+  const tr = $('env').insertRow(); tr.insertCell().textContent = k;
+  const td = tr.insertCell(); td.textContent = v; if (cls) td.className = cls;
+}
+async function env() {
+  const yes = (b) => [b ? 'yes' : 'no', b ? 'ok' : 'bad'];
+  row('Browser', navigator.userAgent);
+  row('Secure page (HTTPS)', ...yes(window.isSecureContext));
+  row('SpeechRecognition', SR ? (window.SpeechRecognition ? 'yes (unprefixed)' : 'yes (webkit prefix)') : 'no', SR ? 'ok' : 'bad');
+  row('On-device API (available/install)', ...yes(!!(SR && SR.available && SR.install)));
+  row('getUserMedia', ...yes(!!navigator.mediaDevices?.getUserMedia));
+  row('MediaRecorder', ...yes(!!window.MediaRecorder));
+  row('Recorder format', window.MediaRecorder ? (['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4', 'audio/ogg;codecs=opus'].find((m) => MediaRecorder.isTypeSupported(m)) || 'none listed') : 'n/a');
+  row('Cores / memory (GB)', `${navigator.hardwareConcurrency ?? '?'} / ${navigator.deviceMemory ?? '?'}`);
+  try {
+    const p = await navigator.permissions.query({ name: 'microphone' });
+    row('Mic permission now', p.state, p.state === 'denied' ? 'bad' : '');
+  } catch { row('Mic permission now', 'unknown'); }
+  if (!navigator.gpu) row('WebGPU', 'no', 'bad');
+  else {
+    try {
+      const a = await navigator.gpu.requestAdapter();
+      if (!a) row('WebGPU', 'API present, no adapter', 'warn');
+      else {
+        const info = a.info || {};
+        row('WebGPU', `yes (${[info.vendor, info.architecture, info.device].filter(Boolean).join(' ') || 'adapter ok'})`, 'ok');
+        row('WebGPU shader-f16', ...yes(a.features.has('shader-f16')));
+      }
+    } catch (e) { row('WebGPU', 'error: ' + e.message, 'bad'); }
+  }
+  report();
+}
+env();
+
+/* ---------- 2. built-in recognition ---------- */
+$('srStart').onclick = () => {
+  const S = '2. Built-in recognition';
+  $('srOut').textContent = '';
+  if (!SR) return out(S, 'srOut', 'Not available: this browser has no SpeechRecognition.', 'bad');
+  let r;
+  try { r = new SR(); } catch (e) { return out(S, 'srOut', 'Constructor threw: ' + e.message, 'bad'); }
+  r.lang = 'fr-CA'; r.interimResults = false; r.maxAlternatives = 3;
+  const t0 = performance.now(), ms = () => Math.round(performance.now() - t0) + ' ms';
+  ['start', 'audiostart', 'speechstart', 'speechend', 'audioend'].forEach((ev) => r.addEventListener(ev, () => out(S, 'srOut', `${ev} @ ${ms()}`)));
+  r.onresult = (e) => out(S, 'srOut', `RESULT @ ${ms()}: ` + [...e.results[0]].map((x) => `"${x.transcript}" (${(x.confidence ?? 0).toFixed(2)})`).join(' | '), 'ok');
+  r.onerror = (e) => out(S, 'srOut', `ERROR @ ${ms()}: ${e.error}${e.message ? ' (' + e.message + ')' : ''}`, 'bad');
+  r.onend = () => out(S, 'srOut', `end @ ${ms()}`);
+  try { r.start(); out(S, 'srOut', 'start() called, speak now…'); }
+  catch (e) { out(S, 'srOut', 'start() threw: ' + e.message, 'bad'); }
+};
+
+/* ---------- 3. on-device built-in recognition ---------- */
+const OD_OPTS = { langs: ['fr-CA'], processLocally: true };
+$('odCheck').onclick = async () => {
+  const S = '3. On-device built-in';
+  if (!SR?.available) return out(S, 'odOut', 'Not offered: SpeechRecognition.available() does not exist here.', 'bad');
+  for (const lang of ['fr-CA', 'fr-FR']) {
+    try { out(S, 'odOut', `${lang}: ${await SR.available({ langs: [lang], processLocally: true })}`); }
+    catch (e) { out(S, 'odOut', `${lang}: available() threw ${e.message}`, 'bad'); }
+  }
+  $('odInstall').disabled = !SR.install;
+};
+$('odInstall').onclick = async () => {
+  const S = '3. On-device built-in';
+  out(S, 'odOut', 'install() called, waiting (gives up after 60 s)…');
+  const timeout = new Promise((res) => setTimeout(() => res('timed out'), 60000));
+  try { out(S, 'odOut', 'install result: ' + await Promise.race([SR.install(OD_OPTS), timeout])); }
+  catch (e) { out(S, 'odOut', 'install() threw: ' + e.message, 'bad'); }
+};
+
+/* ---------- 4. microphone ---------- */
+let stream = null;
+async function getMic() {
+  if (stream?.getAudioTracks().some((t) => t.readyState === 'live')) return stream;
+  stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, channelCount: 1 } });
+  const ac = new AudioContext(), an = ac.createAnalyser(); an.fftSize = 1024;
+  ac.createMediaStreamSource(stream).connect(an);
+  const buf = new Float32Array(an.fftSize);
+  (function tick() { an.getFloatTimeDomainData(buf); let s = 0; for (const v of buf) s += v * v; $('lvl').value = Math.min(1, Math.sqrt(s / buf.length) * 8); requestAnimationFrame(tick); })();
+  return stream;
+}
+$('micBtn').onclick = async () => {
+  const S = '4. Microphone';
+  try {
+    const s = await getMic(), t = s.getAudioTracks()[0], st = t.getSettings();
+    out(S, 'micOut', `granted: "${t.label || 'unnamed'}", ${st.sampleRate ?? '?'} Hz, ${st.channelCount ?? '?'} ch. Speak: the bar should move.`, 'ok');
+  } catch (e) { out(S, 'micOut', `failed: ${e.name}: ${e.message}`, 'bad'); }
+};
+
+/* ---------- 5. Whisper on device ---------- */
+// Every reply in the game, correct ones first, as targets to say.
+const PHRASES = [...new Set([...LINES.flatMap((t) => t.options.filter((o) => o.ok)), ...LINES.flatMap((t) => t.options.filter((o) => !o.ok))].map((o) => o.fr))];
+PHRASES.forEach((p) => { const o = document.createElement('option'); o.value = o.textContent = p; o.lang = 'fr'; $('target').appendChild(o); });
+
+// Copy of the game's matcher (main.js norm/lev/sim) so scores here match what the game would decide.
+const norm = (s) => s.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[’‘`]/g, "'").replace(/[^a-z0-9' ]+/g, ' ').replace(/\s+/g, ' ').trim();
+function lev(a, b) {
+  const d = Array.from({ length: a.length + 1 }, (_, i) => [i]);
+  for (let j = 1; j <= b.length; j++) d[0][j] = j;
+  for (let i = 1; i <= a.length; i++) for (let j = 1; j <= b.length; j++) d[i][j] = Math.min(d[i - 1][j] + 1, d[i][j - 1] + 1, d[i - 1][j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+  return d[a.length][b.length];
+}
+function sim(heard, want) {
+  const a = norm(heard), b = norm(want);
+  if (!a || !b) return 0;
+  const whole = 1 - lev(a, b) / Math.max(a.length, b.length);
+  const ta = a.split(' '), tb = b.split(' '), used = new Set();
+  let hit = 0;
+  ta.forEach((x) => { let bj = -1, bs = 0; tb.forEach((y, j) => { if (used.has(j)) return; const sc = 1 - lev(x, y) / Math.max(x.length, y.length); if (sc > bs) { bs = sc; bj = j; } }); if (bs >= .75) { hit++; used.add(bj); } });
+  return Math.max(whole, 2 * hit / (ta.length + tb.length));
+}
+
+// Whisper "prompting": put <|startofprev|> + prompt text before the usual start tokens, so the model
+// expects that wording. Transformers.js 4.3.2 has no prompt_ids option, so we build decoder_input_ids by hand.
+async function transcribePrimed(audio, prompt) {
+  const { model, tokenizer, processor } = asr;
+  const [prev, sot, fr, task, nots] = tokenizer.convert_tokens_to_ids(['<|startofprev|>', '<|startoftranscript|>', '<|fr|>', '<|transcribe|>', '<|notimestamps|>']);
+  const init = [prev, ...tokenizer.encode(' ' + prompt.trim(), { add_special_tokens: false }), sot, fr, task, nots];
+  const { input_features } = await processor(audio);
+  const out = await model.generate({ inputs: input_features, decoder_input_ids: init, max_new_tokens: 64 });
+  const ids = out.tolist()[0].map(Number);
+  return tokenizer.decode(ids.slice(ids.lastIndexOf(nots) + 1), { skip_special_tokens: true }).trim();
+}
+// The self-contained build (onnxruntime-web bundled in). transformers.web.min.js expects a bundler to supply it.
+const TJS = 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@4.3.2/dist/transformers.min.js';
+let asr = null, rec = null, chunks = [];
+$('whLoad').onclick = async () => {
+  const S = '5. Whisper', model = $('whModel').value, device = $('whDevice').value, dt = $('whDtype').value;
+  $('whLoad').disabled = true; $('whRec').disabled = true; asr = null;
+  out(S, 'whOut', `loading ${model} on ${device} (${dt})…`);
+  const t0 = performance.now(); let lastPct = -10;
+  try {
+    const { pipeline } = await import(TJS);
+    asr = await pipeline('automatic-speech-recognition', model, {
+      device, dtype: { encoder_model: dt, decoder_model_merged: dt },
+      progress_callback: (p) => {
+        if (p.status === 'progress' && p.file?.endsWith('.onnx') && p.progress - lastPct >= 25) { lastPct = p.progress; out(S, 'whOut', `  ${p.file} ${Math.round(p.progress)}%`); }
+      },
+    });
+    out(S, 'whOut', `loaded in ${((performance.now() - t0) / 1000).toFixed(1)} s. Tap Record and say a phrase.`, 'ok');
+    $('whRec').disabled = false;
+  } catch (e) { out(S, 'whOut', `load failed: ${e.message}`, 'bad'); }
+  $('whLoad').disabled = false;
+};
+$('whRec').onclick = async () => {
+  const S = '5. Whisper';
+  if (rec?.state === 'recording') { rec.stop(); return; }
+  try {
+    const s = await getMic();
+    chunks = []; rec = new MediaRecorder(s);
+    rec.ondataavailable = (e) => e.data.size && chunks.push(e.data);
+    rec.onstop = async () => {
+      $('whRec').textContent = 'Record (tap again to stop)'; $('whRec').disabled = true;
+      try {
+        const blob = new Blob(chunks, { type: rec.mimeType });
+        const ac = new AudioContext({ sampleRate: 16000 }); // Whisper wants 16 kHz mono
+        const audio = (await ac.decodeAudioData(await blob.arrayBuffer())).getChannelData(0);
+        ac.close();
+        // Loudness of the clip: Whisper invents text from near-silent audio, so log it to tell a mic problem from a model problem.
+        let peak = 0, sq = 0; for (const v of audio) { peak = Math.max(peak, Math.abs(v)); sq += v * v; }
+        const rms = Math.sqrt(sq / audio.length);
+        out(S, 'whOut', `transcribing ${(audio.length / 16000).toFixed(1)} s of audio (peak ${peak.toFixed(3)}, rms ${rms.toFixed(4)})…`, peak < 0.05 ? 'warn' : '');
+        const want = $('target').value, sc = (h) => sim(h, want).toFixed(2);
+        out(S, 'whOut', `target: "${want}"`);
+        let t0 = performance.now();
+        const r = await asr(audio, { language: 'french', task: 'transcribe' });
+        const plain = r.text.trim();
+        out(S, 'whOut', `  plain:        "${plain}" in ${((performance.now() - t0) / 1000).toFixed(2)} s, score ${sc(plain)}`, sim(plain, want) >= .6 ? 'ok' : 'bad');
+        if ($('prime').checked) {
+          t0 = performance.now();
+          const pr = await transcribePrimed(audio, want);
+          out(S, 'whOut', `  primed:       "${pr}" in ${((performance.now() - t0) / 1000).toFixed(2)} s, score ${sc(pr)}`, sim(pr, want) >= .6 ? 'ok' : 'bad');
+          // Control: prime with a different phrase. If this also "passes", priming is making Whisper parrot the prompt.
+          const wrong = PHRASES[(PHRASES.indexOf(want) + 3) % PHRASES.length];
+          const pw = await transcribePrimed(audio, wrong);
+          out(S, 'whOut', `  wrong-primed: "${pw}" (primed with "${wrong}"), score vs target ${sc(pw)}, vs wrong ${sim(pw, wrong).toFixed(2)}`, sim(pw, wrong) >= .6 ? 'bad' : '');
+        }
+      } catch (e) { out(S, 'whOut', `transcribe failed: ${e.message}`, 'bad'); }
+      $('whRec').disabled = false;
+    };
+    rec.start();
+    $('whRec').textContent = 'Recording… tap to stop';
+  } catch (e) { out(S, 'whOut', `mic failed: ${e.name}: ${e.message}`, 'bad'); }
+};
+
+/* ---------- 6. report ---------- */
+$('copy').onclick = async () => {
+  report();
+  try { await navigator.clipboard.writeText($('report').value); $('copy').textContent = 'Copied ✓'; }
+  catch { $('report').select(); $('copy').textContent = 'Select-all done, copy manually'; }
+};
+</script>
+</body>
+</html>
