@@ -11,7 +11,7 @@ import { buildAirport } from './airport3d.js';
 const COL = { teal: '#1F9AA0', ink: '#2C4A52', mint: '#EAFBFC', line: '#BFEDEF', grey: '#6B7C82', ok: '#0B9A6D', bad: '#C0483B' };
 /* Panel padding in px: the card edge is 4px thick + 20px of space, so 24 = 20px of visible padding.
    Change this one number to adjust the top and bottom padding of every panel. */
-const PANEL_PAD = 40;
+const PANEL_PAD = 70;
 const FONT = "'Source Sans 3','Segoe UI',Arial,sans-serif";
 
 /* ---------- renderer / camera ---------- */
