@@ -9,6 +9,9 @@ import { buildAirport } from './airport3d.js';
 
 /* ---------- design tokens (from the Figma mid-fidelity file) ---------- */
 const COL = { teal: '#1F9AA0', ink: '#2C4A52', mint: '#EAFBFC', line: '#BFEDEF', grey: '#6B7C82', ok: '#0B9A6D', bad: '#C0483B' };
+/* Panel padding in px: the card edge is 4px thick + 20px of space, so 24 = 20px of visible padding.
+   Change this one number to adjust the top and bottom padding of every panel. */
+const PANEL_PAD = 24;
 const FONT = "'Source Sans 3','Segoe UI',Arial,sans-serif";
 
 /* ---------- renderer / camera ---------- */
@@ -137,11 +140,11 @@ class Panel {
     hPx = Math.round(hPx);
     if (hPx === this.cv.height) return;
     const g = this.mesh.geometry.parameters.height, mid = this.mesh.position.y;
-    const ref = anchor === 'bottom' ? mid - g / 2 : mid;
+    const ref = anchor === 'bottom' ? mid - g / 2 : anchor === 'top' ? mid + g / 2 : mid;
     this.cv.height = hPx;
     const hm = hPx / this.cv.width * this.w;
     this.mesh.geometry.dispose(); this.mesh.geometry = new THREE.PlaneGeometry(this.w, hm);
-    this.mesh.position.y = anchor === 'bottom' ? ref + hm / 2 : ref;
+    this.mesh.position.y = anchor === 'bottom' ? ref + hm / 2 : anchor === 'top' ? ref - hm / 2 : ref;
     this.h = hm; this.tex.dispose();
   }
   // text whose capital-letter height is centred on cy (even space above and below)
@@ -169,7 +172,7 @@ let bubbleFr = '', bubbleEn = '', msg = { t: '', c: COL.grey };
 
 /* street card (Figma: "You are located in the Rosemont neighbourhood…") */
 const streetCard = new Panel(1.25, 0.62, (p) => {
-  const W = p.cv.width, PAD = 24, by = PAD + p.tm(card.t, 42, 700, W - 100) + 36;
+  const W = p.cv.width, PAD = PANEL_PAD, by = PAD + p.tm(card.t, 42, 700, W - 100) + 36;
   p.fit(by + 100 + PAD); const H = p.cv.height;
   p.rr(4, 4, W - 8, H - 8, 36, 'rgba(244,251,252,.94)', COL.line);
   p.ttext(card.t, 50, PAD, 42, COL.teal, 700, W - 100);
@@ -206,7 +209,7 @@ const useCloud = () => !!STT_URL && CAN_REC && !cloudOff;
 const SIM_VOICE = true;
 const voiceOK = () => SIM_VOICE || useCloud() || (!!SR && !voiceOff);
 const choices = new Panel(1.5, 1.3, (p) => {
-  const c = p.ctx, W = p.cv.width, PAD = 24, MR = 60, MY = 750;
+  const c = p.ctx, W = p.cv.width, PAD = PANEL_PAD, MR = 60, MY = 750;
   p.fit(MY + MR + PAD); const H = p.cv.height;
   p.rr(4, 4, W - 8, H - 8, 40, 'rgba(244,251,252,.95)', COL.line);
   p.ttext(voiceOK() ? 'Use the microphone to reply with the answer you believe best fits.' : 'Choose the reply you believe best fits. Point at it and pull the trigger.', 48, PAD, 38, COL.teal, 700, W - 96);
@@ -241,7 +244,7 @@ const choices = new Panel(1.5, 1.3, (p) => {
 
 /* results (Figma: score gauge, "Excellent job!") */
 const result = new Panel(1.1, 1.1, (p) => {
-  const W = p.cv.width, PAD = 24, cx = W / 2, cy = PAD + 20 + 200; // top of the gauge stroke sits 20px below the card edge
+  const W = p.cv.width, PAD = PANEL_PAD, cx = W / 2, cy = PAD + 20 + 200; // top of the gauge stroke sits 20px below the card edge
   const bodyB = 444 + p.tm(res.body, 36, 400, W - 140), by = bodyB + 36;
   p.fit(by + 100 + PAD); const c = p.ctx, H = p.cv.height;
   p.rr(4, 4, W - 8, H - 8, 44, 'rgba(255,255,255,.97)', COL.line);
@@ -642,7 +645,7 @@ function logo(c, x, y, s, hole) {
 const loading = new Panel(1.2, .8, (p) => {
   const c = p.ctx, W = p.cv.width;
   if (cur === 'tip') {
-    const PAD = 24, t1 = 'Use your map to navigate the neighbourhood.', t2 = 'Look for the café on your route, then walk in.';
+    const PAD = PANEL_PAD, t1 = 'Use your map to navigate the neighbourhood.', t2 = 'Look for the café on your route, then walk in.';
     const b1 = PAD + p.tm(t1, 52, 600, W - 140), t2top = b1 + 40, b2 = t2top + p.tm(t2, 36, 400, W - 160), rowCy = b2 + 64;
     p.fit(rowCy + 40 + PAD); const H = p.cv.height;
     p.rr(4, 4, W - 8, H - 8, 40, '#fff', COL.line);
@@ -653,24 +656,44 @@ const loading = new Panel(1.2, .8, (p) => {
     const H = p.cv.height; logo(c, W / 2, 230, 110); p.text('Connecting you…', W / 2, 400, 48, '#fff', 500, W, 'center'); }
 }).place(0, 1.5, -1.6);
 
+/* sign-in: two Figma frames ("Sign In" steps + one-time code, then "Hello, Alex!") that dissolve into each other.
+   Layout numbers are the frame's own pixels (1404 px wide), scaled by K to the panel canvas. */
+let sgMix = 0; // 0 = steps frame, 1 = hello frame (animated in the main loop)
 const sign = new Panel(1.1, .85, (p) => {
-  const c = p.ctx, W = p.cv.width, PAD = 24, last = 'You’re all set. You will be connected in a moment.';
-  p.fit(cur === 'signin' ? 590 + PAD : 330 + p.tm(last, 36, 400, W - 160) + PAD); const H = p.cv.height;
+  const c = p.ctx, W = p.cv.width, K = W / 1404, m = sgMix * sgMix * (3 - 2 * sgMix);
+  p.fit(1080 * K + (940 - 1080) * K * m, 'top'); const H = p.cv.height;
   p.rr(4, 4, W - 8, H - 8, 44, '#fff', COL.line);
-  p.ttext('Sign in', W / 2, PAD, 64, '#111', 700, W, 'center');
-  if (cur === 'signin') {
-    [['Take off your headset and go to worldspeak.auth0.com/authenticate', 130], ['Enter this one-time login code on your external device.', 320]].forEach(([t, y], i) => {
-      c.beginPath(); c.arc(80, y + 24, 30, 0, 7); c.fillStyle = COL.ok; c.fill();
-      p.text(String(i + 1), 80, y + 4, 36, '#fff', 700, 60, 'center');
-      p.text(t, 140, y, 34, COL.grey, 400, W - 190);
+  const GREY = '#7a7a7a', cx = W / 2;
+  c.save(); c.textBaseline = 'alphabetic';
+  // shared title
+  c.fillStyle = '#000'; c.font = `700 ${108 * K}px ${FONT}`; c.textAlign = 'center'; c.fillText('Sign In', cx, 226 * K);
+  // frame 1: steps + code
+  if (m < 1) {
+    c.globalAlpha = 1 - m;
+    [[398, ['Take off your headset and go to', 'https://worldspeak.auth0.com/authenticate'], 1], [630, ['Enter this one time login code on your', 'external device.'], 2]].forEach(([cy, ls, n]) => {
+      c.beginPath(); c.arc(184 * K, cy * K, 54 * K, 0, 7); c.fillStyle = COL.ok; c.fill();
+      c.fillStyle = '#fff'; c.font = `700 ${48 * K}px ${FONT}`; c.textAlign = 'center'; c.fillText(String(n), 184 * K, (cy + 17) * K);
+      c.fillStyle = GREY; c.font = `400 ${46 * K}px ${FONT}`; c.textAlign = 'left';
+      ls.forEach((l, i) => { const y = (cy + 7 + i * 80) * K; c.fillText(l, 283 * K, y); if (n === 1 && i === 1) { const w = c.measureText(l).width; c.fillRect(283 * K, y + 7 * K, w, 3 * K); } });
     });
-    p.rr(60, 480, W - 120, 110, 16, '#fff', '#c9d2d6'); p.text(code, W / 2, 510, 48, COL.ink, 700, W, 'center');
-  } else {
-    c.beginPath(); c.arc(W / 2, 170, 56, 0, 7); c.fillStyle = COL.ok; c.fill();
-    p.text('✓', W / 2, 125, 80, '#fff', 700, 100, 'center');
-    p.text('Hello, Alex!', W / 2, 240, 64, COL.grey, 700, W, 'center');
-    p.ttext(last, W / 2, 330, 36, COL.grey, 400, W - 160, 'center');
+    p.rr(127 * K, 805 * K, 1150 * K, 162 * K, 16 * K, '#fff', '#bdbdbd', 4 * K);
+    c.fillStyle = '#000'; c.font = `700 ${54 * K}px ${FONT}`; c.textAlign = 'center';
+    if ('letterSpacing' in c) c.letterSpacing = `${10 * K}px`;
+    c.fillText(code.replace(/ /g, ''), cx + 5 * K, 906 * K);
+    if ('letterSpacing' in c) c.letterSpacing = '0px';
   }
+  // frame 2: success
+  if (m > 0) {
+    c.globalAlpha = m;
+    c.beginPath(); c.arc(cx, 398 * K, 54 * K, 0, 7); c.fillStyle = COL.ok; c.fill();
+    c.strokeStyle = '#fff'; c.lineWidth = 7 * K; c.lineCap = 'round'; c.lineJoin = 'round';
+    c.beginPath(); c.moveTo(681 * K, 404 * K); c.lineTo(699 * K, 421 * K); c.lineTo(731 * K, 382 * K); c.stroke();
+    c.fillStyle = GREY; c.textAlign = 'center';
+    c.font = `600 ${82 * K}px ${FONT}`; c.fillText('Hello, Alex!', cx, 620 * K);
+    c.font = `400 ${46 * K}px ${FONT}`;
+    c.fillText('You’re all set. You will be connected in a', cx, 703 * K); c.fillText('moment.', cx, 783 * K);
+  }
+  c.restore();
 }).place(0, 1.5, -1.5);
 
 /* globe + dashboard */
@@ -795,7 +818,7 @@ function list(p, items, subs, sel, y0, h, pickFn, enabled = () => true) {
   });
 }
 const dash = new Panel(1.6, 1.45, (p) => {
-  const c = p.ctx, W = p.cv.width, PAD = 24;
+  const c = p.ctx, W = p.cv.width, PAD = PANEL_PAD;
   const bottom = { lang: dMsg ? 772 : 706, loc: dMsg ? 817 : 749, locall: 837, learn: 835 }[dState];
   p.fit(bottom + PAD); const H = p.cv.height;
   p.rr(4, 4, W - 8, H - 8, 40, 'rgba(240,245,247,.96)', COL.line);
@@ -863,7 +886,7 @@ function boot() {
   if (go === 'dash') { dState = 'lang'; return setScene('dash'); }
   if (go === 'desk') return toDesk();
   setScene('load');
-  later(2600, () => { setScene('signin'); later(3500, () => { setScene('welcome'); later(2200, () => transition(() => { dState = 'lang'; setScene('dash'); })); }); });
+  later(2600, () => { setScene('signin'); later(3800, () => { setScene('welcome'); later(2800, () => transition(() => { dState = 'lang'; setScene('dash'); })); }); });
 }
 function toDesk() {
   transition(() => {
@@ -897,7 +920,7 @@ const coffee = new THREE.Mesh(new THREE.CylinderGeometry(.033, .033, .004, 20), 
 const cupGrab = new THREE.Mesh(new THREE.SphereGeometry(.14, 8, 6), new THREE.MeshBasicMaterial({ visible: false })); cupGrab.position.y = .05; cupG.add(cupGrab);
 room.steam(cupG, 0, .085, 0, 1);
 const cupHint = new Panel(1.1, .34, (p) => {
-  const W = p.cv.width, PAD = 24;
+  const W = p.cv.width, PAD = PANEL_PAD;
   p.fit(PAD + p.tm(cupMsg, 46, 700, W - 80) + PAD); const H = p.cv.height;
   p.rr(4, 4, W - 8, H - 8, 30, 'rgba(244,251,252,.95)', COL.line);
   p.ttext(cupMsg, W / 2, PAD, 46, COL.teal, 700, W - 80, 'center');
@@ -1107,7 +1130,7 @@ const v3 = new THREE.Vector3(), w3 = new THREE.Vector3();
 let payOn = false, payDone = true, payHolder = null, payNear = 0, mouseTerm = null, actx = null;
 const card3d = room.makeCard();
 const payHint = new Panel(.8, .3, (p) => {
-  const W = p.cv.width, PAD = 24, t1 = 'Tap your card on the terminal to pay.', t2 = 'You can also point at the terminal and pull the trigger.';
+  const W = p.cv.width, PAD = PANEL_PAD, t1 = 'Tap your card on the terminal to pay.', t2 = 'You can also point at the terminal and pull the trigger.';
   const b1 = PAD + p.tm(t1, 40, 700, W - 80), t2top = b1 + 12, b2 = t2top + p.tm(t2, 28, 400, W - 80), by = b2 + 24;
   p.fit(by + 76 + PAD); const H = p.cv.height;
   p.rr(4, 4, W - 8, H - 8, 34, 'rgba(244,251,252,.96)', COL.line);
@@ -1231,6 +1254,11 @@ boot();
 
 renderer.setAnimationLoop(() => {
   const dt = Math.min(clock.getDelta(), .1) * (paused ? 0 : 1), t = clock.elapsedTime, talkNow = talking && !paused;
+  if (sign.mesh.visible) { // dissolve between the two sign-in frames
+    if (cur === 'signin' && sgMix > 0) { sgMix = 0; sign.render(); }
+    const tg = cur === 'welcome' ? 1 : 0;
+    if (sgMix !== tg) { sgMix = tg > sgMix ? Math.min(tg, sgMix + dt / 1.1) : Math.max(tg, sgMix - dt / 1.1); sign.render(); }
+  }
   const want = new Map();
   for (const c of ctrls) {
     tmpM.identity().extractRotation(c.matrixWorld);
