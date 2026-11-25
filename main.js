@@ -96,7 +96,7 @@ class Panel {
     this.ctx = this.cv.getContext('2d');
     this.tex = new THREE.CanvasTexture(this.cv);
     this.tex.colorSpace = THREE.SRGBColorSpace;
-    this.mesh = new THREE.Mesh(new THREE.PlaneGeometry(w, h), new THREE.MeshBasicMaterial({ map: this.tex, transparent: true, toneMapped: false }));
+    this.mesh = new THREE.Mesh(new THREE.PlaneGeometry(w, h), new THREE.MeshBasicMaterial({ map: this.tex, transparent: true, toneMapped: false, depthWrite: false }));
     this.mesh.userData.panel = this;
     this.mesh.visible = false;
     scene.add(this.mesh);
@@ -1115,7 +1115,7 @@ function frontOf(mesh, dist, dy = 0) {
 }
 function hudPlace() {
   if ((cur === 'cafe' || cur === 'desk') && stage.valid) { // sits just right of the dialogue, in the same place all step
-    const dx = 1.12 * (A.big ? 1.25 : 1), d = 1.0, y = stage.ey - .05; // right of the dialogue column
+    const dx = 1.22 * (A.big ? 1.25 : 1), d = 1.0, y = stage.ey + .08; // right of the dialogue column
     hud.mesh.position.set(stage.ex + stage.fx * d - stage.fz * dx, y, stage.ez + stage.fz * d + stage.fx * dx);
     hud.mesh.lookAt(stage.ex, y, stage.ez);
     return;
