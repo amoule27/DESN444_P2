@@ -196,18 +196,21 @@ const bubble = new Panel(1.3, 0.62, (p) => {
 /* reply choices (Figma: "Use the microphone to reply…", speaker icons, mic, "Skip. Not sure.") */
 let order_ = [];
 let listening = false, sel = -1, voiceOff = false;
-/* Cloud speech-to-text (recommended on Quest Browser, which has no built-in recogniser).
-   Set STT_DEFAULT to your Cloudflare Worker address (see stt-proxy/README.md), or test with ?stt=https://your-worker.workers.dev once. */
-const STT_DEFAULT = '';
-let STT_URL = STT_DEFAULT;
-try { const q = new URLSearchParams(location.search).get('stt'); if (q !== null) localStorage.setItem('fvr-stt', q); STT_URL = localStorage.getItem('fvr-stt') || STT_DEFAULT; } catch (e) {}
-const CAN_REC = !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia && window.MediaRecorder);
-let cloudOff = false, thinking = false, cloud = null, sttTok = 0, sttFails = 0, micStream = null;
-const useCloud = () => !!STT_URL && CAN_REC && !cloudOff;
+/* On-device speech-to-text: Whisper runs in a Web Worker (stt-worker.js), on the GPU where available.
+   Quest Browser has no built-in speech recognition, so this is the main voice path everywhere. Nothing is sent
+   to a server: the model (~145 MB) downloads once from Hugging Face and is then cached by the browser.
+   If it can't load, voice falls back to the browser's recogniser (desktop Chrome), then to point-and-trigger. */
+const CAN_REC = !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia && window.MediaRecorder && window.Worker);
+let thinking = false, clip = null, sttTok = 0, sttFails = 0, micStream = null;
+const stt = { worker: null, state: 'idle', pct: 0, jobs: new Map(), id: 0 }; // state: idle | loading | ready | failed
+const useLocal = () => CAN_REC && stt.state !== 'failed';
+const voiceLoading = () => !SIM_VOICE && useLocal() && stt.state !== 'ready';
 /* Prototype mode: the mic button shows a "listening" animation, then accepts the selected reply as if it had been spoken.
-   Set to false to use real recognition (cloud proxy or browser speech) instead. */
-const SIM_VOICE = true;
-const voiceOK = () => SIM_VOICE || useCloud() || (!!SR && !voiceOff);
+   Set to true only to demo the flow without a microphone. */
+const SIM_VOICE = false;
+// Add ?voicedebug to the URL to log each clip (length, loudness) and what Whisper heard to the console.
+const VOICE_DEBUG = new URLSearchParams(location.search).has('voicedebug');
+const voiceOK = () => SIM_VOICE || useLocal() || (!!SR && !voiceOff);
 const choices = new Panel(1.5, 1.3, (p) => {
   const c = p.ctx, W = p.cv.width, PAD = PANEL_PAD, MR = 60, MY = 750;
   p.fit(MY + MR + PAD); const H = p.cv.height;
@@ -225,7 +228,7 @@ const choices = new Panel(1.5, 1.3, (p) => {
   });
   p.text(msg.t, 48, 600, 30, msg.c, 600, W - 96);
   // microphone: grey and disabled until a reply is selected (Figma frame 17), teal when ready (frame 59)
-  const micOn = voiceOK() && sel >= 0 && !busy && !thinking, mh = p.hover === 'mic' && micOn, mc = listening ? COL.bad : micOn ? '#4A9798' : '#A5A5A5';
+  const micOn = voiceOK() && !voiceLoading() && sel >= 0 && !busy && !thinking, mh = p.hover === 'mic' && micOn, mc = listening ? COL.bad : micOn ? '#4A9798' : '#A5A5A5';
   if (listening) { c.beginPath(); c.arc(106, MY, MR + 14, 0, Math.PI * 2); c.strokeStyle = 'rgba(192,72,59,.3)'; c.lineWidth = 8; c.stroke(); }
   c.save(); c.shadowColor = 'rgba(0,0,0,.22)'; c.shadowBlur = 18; c.shadowOffsetY = 8;
   c.beginPath(); c.arc(106, MY, MR, 0, Math.PI * 2);
@@ -233,7 +236,7 @@ const choices = new Panel(1.5, 1.3, (p) => {
   c.fillStyle = listening ? '#FBE3E0' : mh ? '#E6F8F8' : mg; c.fill(); c.restore();
   c.beginPath(); c.arc(106, MY, MR, 0, Math.PI * 2); c.strokeStyle = listening ? COL.bad : micOn ? '#B9DADA' : '#A5A5A5'; c.lineWidth = 5; c.stroke();
   micIcon(c, 106, MY, 100, mc);
-  const lab = !voiceOK() ? '' : thinking ? 'Checking…' : listening ? 'Listening… tap to stop' : micOn ? 'Tap to speak' : 'Select a reply first';
+  const lab = !voiceOK() ? '' : voiceLoading() ? `Loading voice…${stt.pct ? ' ' + stt.pct + '%' : ''}` : thinking ? 'Checking…' : listening ? 'Listening… tap to stop' : micOn ? 'Tap to speak' : 'Select a reply first';
   p.text(lab, 190, MY - 18, 30, listening ? COL.bad : micOn ? COL.teal : COL.grey, 600, W - 640);
   p.hits.push({ x: 46, y: MY - MR, w: MR * 2, h: MR * 2, id: 'mic', fn: toggleMic });
   // skip: plain grey text, no fill or stroke
@@ -320,7 +323,7 @@ function stopListening() {
   clearTimeout(recTimer);
   const was = listening || thinking;
   listening = false; thinking = false; sttTok++;
-  if (cloud) { const c = cloud; cloud = null; c.cancelled = true; cloudClean(c); try { if (c.rec.state !== 'inactive') c.rec.stop(); } catch (e) {} }
+  if (clip) { const c = clip; clip = null; c.cancelled = true; clipClean(c); try { if (c.rec.state !== 'inactive') c.rec.stop(); } catch (e) {} }
   if (srec) { const r = srec; srec = null; r.onresult = r.onerror = r.onend = null; try { r.abort(); } catch (e) {} }
   if (was && choices.mesh.visible) choices.render();
 }
@@ -329,6 +332,7 @@ function micError(code) {
   if (code === 'audio-capture') return 'No microphone found. Point and pull the trigger on a reply instead.';
   if (code === 'network') return 'Voice needs an internet connection. Point and pull the trigger on a reply instead.';
   if (code === 'no-speech') return 'I didn’t hear anything. Tap the mic and try again.';
+  if (code === 'stt') return 'I couldn’t check that. Tap the mic and try again, or point and pull the trigger on a reply.';
   return 'Voice did not work. Point and pull the trigger on a reply instead.';
 }
 function heardIt(alts) {
@@ -342,8 +346,9 @@ function heardIt(alts) {
 function toggleMic() {
   if (busy || paused || modal || thinking) return;
   if (!voiceOK()) return;
+  if (voiceLoading()) { sttLoad(); msg = { t: 'Voice is still loading. One moment…', c: COL.grey }; return choices.render(); }
   if (sel < 0) { msg = { t: 'Select a reply first, then tap the microphone.', c: COL.grey }; return choices.render(); }
-  if (listening) { if (cloud && !cloud.finishing) return cloudFinish(); stopListening(); msg = { t: '', c: COL.grey }; return choices.render(); }
+  if (listening) { if (clip && !clip.finishing) return clipFinish(); stopListening(); msg = { t: '', c: COL.grey }; return choices.render(); }
   if (talking) { msg = { t: 'Wait until the barista has finished, then tap the mic.', c: COL.grey }; return choices.render(); }
   try { synth && synth.cancel(); } catch (e) {}
   if (SIM_VOICE) {
@@ -353,7 +358,7 @@ function toggleMic() {
     recTimer = setTimeout(() => { if (!listening) return; listening = false; pick(o, o.fr); }, 2400);
     return;
   }
-  if (useCloud()) return cloudStart();
+  if (useLocal()) return clipStart();
   const r = new SR();
   srec = r; r.lang = 'fr-CA'; r.interimResults = false; r.continuous = false; r.maxAlternatives = 5;
   let got = false;
@@ -374,63 +379,102 @@ function toggleMic() {
   choices.render();
 }
 
-/* ---------- cloud speech-to-text: record the mic, send to the proxy, match the transcript ---------- */
+/* ---------- on-device speech-to-text: record the mic, transcribe in the Whisper worker, match the transcript ---------- */
+function sttLoad() { // idempotent: called on Enter VR, "Enable microphone", and the first café turn
+  if (SIM_VOICE || !CAN_REC || stt.state !== 'idle') return;
+  stt.state = 'loading';
+  try { stt.worker = new Worker(new URL('./stt-worker.js', import.meta.url), { type: 'module' }); } catch (e) { return sttFail(); }
+  stt.worker.onmessage = ({ data: d }) => {
+    if (d.type === 'progress') { if (d.pct - stt.pct >= 5 || d.pct === 100) { stt.pct = d.pct; if (choices.mesh.visible) choices.render(); } }
+    else if (d.type === 'ready') {
+      stt.state = 'ready';
+      if (sel >= 0 && !busy) msg = { t: 'Tap the microphone and say your reply in French.', c: COL.teal };
+      if (choices.mesh.visible) choices.render();
+    } else if (d.type === 'failed') sttFail();
+    else { const j = stt.jobs.get(d.id); if (j) { stt.jobs.delete(d.id); d.type === 'result' ? j.res(d.text) : j.rej(new Error(d.message)); } }
+  };
+  stt.worker.onerror = () => sttFail();
+  stt.worker.postMessage({ type: 'load' });
+}
+function sttFail() { // voice falls back to the browser recogniser if there is one, else point-and-trigger
+  stt.state = 'failed';
+  stt.jobs.forEach((j) => j.rej(new Error('stt unavailable'))); stt.jobs.clear();
+  try { stt.worker && stt.worker.terminate(); } catch (e) {}
+  if (choices.mesh.visible) choices.render();
+}
+function sttRun(audio, prompt) {
+  return new Promise((res, rej) => {
+    const id = ++stt.id;
+    stt.jobs.set(id, { res, rej });
+    setTimeout(() => { if (stt.jobs.delete(id)) rej(new Error('stt timeout')); }, 20000);
+    stt.worker.postMessage({ type: 'transcribe', id, audio, prompt }, [audio.buffer]);
+  });
+}
+async function toPcm16k(blob) { // Whisper wants 16 kHz mono Float32
+  const ac = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
+  try { return (await ac.decodeAudioData(await blob.arrayBuffer())).getChannelData(0).slice(); }
+  finally { ac.close().catch(() => {}); }
+}
 async function getMic() {
   if (micStream && micStream.getAudioTracks().some((t) => t.readyState === 'live')) return micStream;
   micStream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, channelCount: 1 } });
   return micStream;
 }
-function prewarmMic() { if (useCloud()) getMic().then(() => { micReady(); }).catch(() => {}); }
+function prewarmMic() { if (useLocal()) { sttLoad(); getMic().then(() => { micReady(); }).catch(() => {}); } }
 function micReady() { const b = document.getElementById('micbtn'); if (b) { b.textContent = 'Microphone ready ✓'; b.disabled = true; } }
 (() => { // small "Enable microphone" button on the 2D page, so the permission prompt happens before you enter VR
-  if (!useCloud()) return;
+  if (SIM_VOICE || !useLocal()) return;
   const h = document.getElementById('hint'); if (!h) return;
   const b = document.createElement('button'); b.id = 'micbtn'; b.textContent = 'Enable microphone';
   b.style.cssText = 'display:block;margin-top:8px;padding:6px 12px;border-radius:10px;border:1px solid #BFEDEF;background:#fff;color:#1F9AA0;font:600 14px inherit;cursor:pointer';
-  b.onclick = () => getMic().then(micReady).catch(() => { b.textContent = 'Microphone blocked: allow it in the browser'; });
+  b.onclick = () => { sttLoad(); getMic().then(micReady).catch(() => { b.textContent = 'Microphone blocked: allow it in the browser'; }); };
   h.appendChild(b);
   navigator.permissions && navigator.permissions.query({ name: 'microphone' }).then((r) => { if (r.state === 'granted') getMic().then(micReady).catch(() => {}); }).catch(() => {});
 })();
-function cloudClean(c) {
+function clipClean(c) {
   clearInterval(c.iv); clearTimeout(c.timer);
   try { c.src && c.src.disconnect(); } catch (e) {}
   try { if (c.ctx) { const x = c.ctx; c.ctx = null; x.close().catch(() => {}); } } catch (e) {}
 }
-function cloudFinish() {
-  const c = cloud; if (!c || c.finishing) return;
-  c.finishing = true; cloudClean(c);
+function clipFinish() {
+  const c = clip; if (!c || c.finishing) return;
+  c.finishing = true; clipClean(c);
   try { c.rec.stop(); } catch (e) { c.rec.onstop && c.rec.onstop(); }
 }
-async function cloudStart() {
-  const my = ++sttTok;
+async function clipStart() {
+  const my = ++sttTok, want = order[sel].fr; // prime Whisper with the reply the student chose
   listening = true; msg = { t: 'Listening… say your reply in French.', c: COL.teal }; choices.render();
   try {
     const stream = await getMic();
     if (my !== sttTok) return;
     const mime = ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4', 'audio/ogg;codecs=opus'].find((m) => MediaRecorder.isTypeSupported(m)) || '';
     const rec = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined);
-    const c = cloud = { rec, chunks: [], mime: rec.mimeType || mime || 'audio/webm', heard: false, t0: performance.now(), last: 0 };
+    const c = clip = { rec, chunks: [], mime: rec.mimeType || mime || 'audio/webm', heard: false, t0: performance.now(), last: 0 };
     rec.ondataavailable = (e) => { if (e.data && e.data.size) c.chunks.push(e.data); };
     rec.onstop = async () => {
-      if (c.cancelled || cloud !== c) return;
-      cloud = null; cloudClean(c); listening = false;
+      if (c.cancelled || clip !== c) return;
+      clip = null; clipClean(c); listening = false;
       if (!c.heard || !c.chunks.length) { msg = { t: micError('no-speech'), c: COL.grey }; return choices.render(); }
       thinking = true; msg = { t: 'Checking what you said…', c: COL.teal }; choices.render();
       const tok = ++sttTok;
       try {
-        const res = await fetch(STT_URL, { method: 'POST', headers: { 'Content-Type': c.mime.split(';')[0] }, body: new Blob(c.chunks, { type: c.mime }) });
-        if (!res.ok) throw new Error('stt ' + res.status);
-        const j = await res.json();
+        const audio = await toPcm16k(new Blob(c.chunks, { type: c.mime }));
+        let peak = 0; for (let i = 0; i < audio.length; i++) peak = Math.max(peak, Math.abs(audio[i]));
+        // near-silent clips make Whisper invent sentences, so treat them as "didn't hear anything"
+        if (VOICE_DEBUG) console.info('[voice] clip', JSON.stringify({ secs: +(audio.length / 16000).toFixed(1), peak: +peak.toFixed(3), skipped: peak < .03 }));
+        if (peak < .03) { if (tok !== sttTok) return; thinking = false; msg = { t: micError('no-speech'), c: COL.grey }; return choices.render(); }
+        const secs = +(audio.length / 16000).toFixed(1), t0 = performance.now(); // read length before the buffer is transferred to the worker
+        const t = await sttRun(audio, want);
+        if (VOICE_DEBUG) console.info('[voice]', JSON.stringify({ want, heard: t, ms: Math.round(performance.now() - t0), secs, peak: +peak.toFixed(3) }));
         if (tok !== sttTok) return;
         thinking = false; sttFails = 0;
-        const t = (j.text || '').trim();
         if (!t) { msg = { t: micError('no-speech'), c: COL.grey }; return choices.render(); }
         heardIt([t]);
       } catch (e) {
         if (tok !== sttTok) return;
         thinking = false;
-        if (++sttFails >= 2) cloudOff = true; // fall back to point-and-trigger after two failures
-        msg = { t: micError('network'), c: COL.bad }; choices.render();
+        if (++sttFails >= 2) sttFail(); // fall back after two failures in a row
+        msg = { t: micError('stt'), c: COL.bad }; choices.render();
       }
     };
     // voice-activity detection: stop ~1.1 s after you finish speaking (or after 9 s)
@@ -445,13 +489,13 @@ async function cloudStart() {
         let sum = 0; for (let i = 0; i < buf.length; i++) sum += buf[i] * buf[i];
         const now = performance.now();
         if (Math.sqrt(sum / buf.length) > .015) { c.heard = true; c.last = now; }
-        if ((c.heard && now - c.last > 1100 && now - c.t0 > 1500) || now - c.t0 > (c.heard ? 9000 : 6500)) cloudFinish();
+        if ((c.heard && now - c.last > 1100 && now - c.t0 > 1500) || now - c.t0 > (c.heard ? 9000 : 6500)) clipFinish();
       }, 80);
-    } catch (e) { c.heard = true; c.timer = setTimeout(cloudFinish, 5000); }
+    } catch (e) { c.heard = true; c.timer = setTimeout(clipFinish, 5000); }
     rec.start();
   } catch (e) {
     if (my !== sttTok) return;
-    listening = false; cloudOff = true;
+    listening = false; voiceOff = true; sttFail(); // no usable mic: point-and-trigger only
     msg = { t: micError(e && e.name === 'NotFoundError' ? 'audio-capture' : 'not-allowed'), c: COL.bad }; choices.render();
   }
 }
@@ -462,6 +506,7 @@ const renderAll = () => { bubble.render(); choices.render(); };
 
 function startTurn() {
   const t = LINES[turn];
+  sttLoad(); // no-op if already loading (it normally starts on Enter VR)
   stopListening(); sel = -1;
   tries = 0; reveal = false; showEn = false; busy = false; msg = { t: '', c: COL.grey };
   order = shuffle(t.options.map((o, i) => ({ ...o, audio: `audio/${ap()}_opt${i + 1}.mp3` })));
@@ -478,7 +523,7 @@ function selectRow(i) {
   if (!voiceOK()) return pick(o);
   stopListening();
   sel = i;
-  msg = { t: 'Tap the microphone and say your reply in French.', c: COL.teal };
+  msg = voiceLoading() ? { t: 'Voice is loading. The mic turns on when it’s ready.', c: COL.grey } : { t: 'Tap the microphone and say your reply in French.', c: COL.teal };
   choices.render();
 }
 function pick(o, heard) {
