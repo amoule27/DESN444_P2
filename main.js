@@ -1173,7 +1173,7 @@ const a11yP = new Panel(.9, .9, (p) => {
   });
 });
 pauseP.noScale = a11yP.noScale = true;
-[pauseP, a11yP, hud].forEach((q) => { q.mesh.renderOrder = 1000; });
+[pauseP, a11yP, hud].forEach((q) => { q.mesh.renderOrder = 1000; q.mesh.material.depthTest = false; });
 function ovPlace() {
   camera.updateWorldMatrix(true, false); camera.getWorldPosition(o3); camera.getWorldDirection(d3); d3.y = 0;
   if (d3.lengthSq() < 1e-4) d3.set(0, 0, -1);
@@ -1184,7 +1184,7 @@ function ovPlace() {
 }
 function modalRestore() {
   ov.visible = false; ovA = ovTarget = 0; ovDome.material.opacity = 0;
-  ovPanels.forEach((q) => { q.mod = 1; q.applyOpacity(); }); ovPanels = [];
+  ovPanels.forEach((q) => { q.mod = 1; q.applyOpacity(); q.mesh.visible = true; }); ovPanels = [];
   pauseP.mesh.visible = a11yP.mesh.visible = false;
   [pauseP, a11yP].forEach((q) => { q.mesh.material.opacity = 1; });
 }
@@ -1364,7 +1364,7 @@ renderer.setAnimationLoop(() => {
     const e = ovA * ovA * (3 - 2 * ovA);
     ovDome.material.opacity = OV_DARK * e;
     [pauseP, a11yP].forEach((q) => { q.mesh.material.opacity = e; });
-    ovPanels.forEach((q) => { q.mod = 1 - e; q.applyOpacity(); });
+    ovPanels.forEach((q) => { q.mod = 1 - e; q.applyOpacity(); q.mesh.visible = e < 1; }); // fully dimmed: the scene's panels are removed so nothing can cover the menu
     if (ovA === 0 && ovTarget === 0) modalRestore();
   }
   if (sign.mesh.visible) { // dissolve between the two sign-in frames
